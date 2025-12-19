@@ -11,7 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.0] - 2025-12-19
+## [1.0.1] - 2025-12-19
+
+### Changed
+- Support multiple email recipients for alerts (comma-separated)
+
+### Removed
+- Debug logging and status displays from dashboard UI
+- All `[DEBUG]` print statements from Leadspedia modules
+- Config details display in sidebar
+
+---
+
+## [1.0.0] - 2025-12-18
 
 ### Added
 - **Core Dashboard**: Streamlit-based dashboard for Meta Lead Ads reporting
@@ -45,7 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date | Description |
 |---------|------|-------------|
-| 1.0.0 | 2025-12-19 | Initial public release |
+| 1.0.1 | 2025-12-19 | Multi-email support, remove debug logging |
+| 1.0.0 | 2025-12-18 | Initial public release |
 
 ---
 
