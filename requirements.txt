@@ -1,0 +1,11 @@
+streamlit>=1.37,<2
+pandas>=2.2,<3
+requests>=2.32,<3
+python-dotenv>=1.0,<2
+tenacity>=9.0,<10
+
+# Optional (only needed if you enable Google Sheets export)
+gspread>=6.1,<7
+google-auth>=2.35,<3
+
+
