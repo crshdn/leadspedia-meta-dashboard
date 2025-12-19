@@ -311,5 +311,3 @@ MIT License - See LICENSE file for details.
 2. Create a feature branch
 3. Make your changes
 4. Submit a pull request
-
-Please ensure no credentials or environment-specific paths are included in commits.
