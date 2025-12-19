@@ -131,7 +131,7 @@ LEADSPEDIA_CAMPAIGN_MAP={"120210123456789012": {"affiliate_id": "123", "vertical
 | Variable | Description |
 |----------|-------------|
 | `ALERT_EMAIL_ENABLED` | Set to `true` to enable |
-| `ALERT_EMAIL_TO` | Recipient email address |
+| `ALERT_EMAIL_TO` | Recipient email address(es), comma-separated for multiple |
 | `ALERT_EMAIL_FROM` | Sender email address |
 | `ALERT_SMTP_HOST` | SMTP server hostname |
 | `ALERT_SMTP_PORT` | SMTP port (typically 587 for TLS) |

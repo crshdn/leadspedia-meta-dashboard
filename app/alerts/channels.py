@@ -115,11 +115,14 @@ class EmailAlertChannel(AlertChannel):
         html_body = self._build_html_body(alerts)
         text_body = self._build_text_body(alerts)
         
+        # Parse recipients (supports comma-separated emails)
+        recipients = [email.strip() for email in self.to_address.split(",") if email.strip()]
+        
         # Create message
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = self.from_address
-        msg["To"] = self.to_address
+        msg["To"] = ", ".join(recipients)
         
         msg.attach(MIMEText(text_body, "plain"))
         msg.attach(MIMEText(html_body, "html"))
@@ -130,7 +133,7 @@ class EmailAlertChannel(AlertChannel):
                 server.starttls()
             if self.smtp_user and self.smtp_password:
                 server.login(self.smtp_user, self.smtp_password)
-            server.sendmail(self.from_address, [self.to_address], msg.as_string())
+            server.sendmail(self.from_address, recipients, msg.as_string())
 
     def _build_subject(self, critical: int, warning: int, total: int) -> str:
         """Build email subject line."""
