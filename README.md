@@ -1,106 +1,291 @@
-## Meta Lead Ads Dashboard (Local)
+# Meta Lead Ads Dashboard
 
-Local Streamlit dashboard + export tool powered by Meta's Marketing API ([docs](https://developers.facebook.com/docs/marketing-api/)) with optional Leadspedia integration for revenue tracking.
+A local Streamlit dashboard for Meta (Facebook) Lead Ads reporting with Leadspedia integration for revenue tracking and ROI analysis.
 
-### What it does
-- Pulls **Lead Ads** performance and computes **CPL** at the **ad/creative** level
-- Breakdowns:
-  - Age/Gender
-  - Placement (publisher + position)
-  - Device
-- **Leadspedia Integration** (optional):
-  - Revenue tracking and ROI calculation
-  - Sell-through rate, unsold leads, avg sale price
-  - Combined profitability KPIs
-- **Alerting System** (optional):
-  - Real-time monitoring for performance issues
-  - Email and Slack notifications
-  - Configurable thresholds per vertical
-- Exports:
-  - CSV download
-  - Optional push to Google Sheets
+## Features
 
-### Setup (safe defaults)
-1. Install deps:
+### Core Analytics
+- **Lead Ads Performance**: Pull performance data at the ad/creative level
+- **CPL (Cost Per Lead)**: Calculate and track cost per lead across campaigns
+- **Breakdowns**: Age/Gender, Placement (publisher + position), Device
+
+### Leadspedia Integration (Optional)
+- **Revenue Tracking**: Match Meta leads to Leadspedia conversions
+- **ROI Calculation**: Real-time return on investment metrics
+- **Sell-through Rate**: Track sold vs. unsold leads
+- **Profitability KPIs**: Combined Meta spend + Leadspedia revenue analysis
+
+### Alerting System (Optional)
+- **Real-time Monitoring**: Automatic alerts for performance issues
+- **Email Notifications**: SMTP-based email alerts
+- **Slack Integration**: Webhook-based Slack notifications
+- **Configurable Thresholds**: Per-vertical threshold settings
+
+### Export Options
+- **CSV Download**: Export data for external analysis
+- **Google Sheets**: Push data directly to Google Sheets (service account)
+
+---
+
+## Quick Start
+
+### 1. Clone and Setup
 
 ```bash
+git clone https://github.com/your-username/meta-ads-api.git
+cd meta-ads-api
+
+# Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-2. Create a local `.env` (not committed) **with tight permissions**:
+### 2. Configure Environment
+
+Create a `.env` file with secure permissions:
 
 ```bash
-cd "/Users/chris/Library/CloudStorage/SynologyDrive-Sync/Sites/meta-ads-api"
 touch .env
 chmod 600 .env
 ```
 
-3. Copy variables from `config.example.env.txt` into `.env` and fill in:
-- `META_AD_ACCOUNT_ID` (like `act_...`)
-- `META_ACCESS_TOKEN`
+Copy settings from `config.example.env.txt` and fill in your values:
 
-### Leadspedia Integration (Optional)
-
-To enable revenue tracking via Leadspedia:
-
-1. Get your API credentials from Leadspedia:
-   - API Key: Settings > System Settings > Security
-   - API Secret: Settings > Users > [Your User] > API Settings
-
-2. Add to your `.env`:
 ```bash
+# Required - Meta API
+META_AD_ACCOUNT_ID=act_XXXXXXXXXXXXX
+META_ACCESS_TOKEN=your_meta_access_token
+
+# Optional - Leadspedia Integration
 LEADSPEDIA_API_KEY=your_api_key
 LEADSPEDIA_API_SECRET=your_api_secret
 ```
 
-3. Configure campaign mappings (JSON format):
-```bash
-LEADSPEDIA_CAMPAIGN_MAP={"120210123456789012": {"affiliate_id": "123", "vertical": "auto"}}
-```
-
-### Alerting (Optional)
-
-Enable alerts by configuring one or more channels:
-
-**Email:**
-```bash
-ALERT_EMAIL_ENABLED=true
-ALERT_EMAIL_TO=alerts@yourcompany.com
-ALERT_EMAIL_FROM=noreply@yourcompany.com
-ALERT_SMTP_HOST=smtp.gmail.com
-ALERT_SMTP_PORT=587
-ALERT_SMTP_USER=your_user
-ALERT_SMTP_PASSWORD=your_password
-```
-
-**Slack:**
-```bash
-ALERT_SLACK_ENABLED=true
-ALERT_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
-```
-
-**Thresholds:**
-```bash
-ALERT_THRESHOLDS={"default": {"min_sell_rate": 95, "min_roi": 20}, "auto": {"min_sell_rate": 90}}
-```
-
-### Run
+### 3. Run the Dashboard
 
 ```bash
 source .venv/bin/activate
 streamlit run app/dashboard.py
 ```
 
-### Security notes
-- Never commit tokens or Google credentials.
-- If you enable Google Sheets export with a service account JSON file, keep it in `.secrets/` and restrict permissions:
+The dashboard will be available at `http://localhost:8501`
+
+---
+
+## Configuration Reference
+
+### Meta API (Required)
+
+| Variable | Description |
+|----------|-------------|
+| `META_AD_ACCOUNT_ID` | Your Meta ad account ID (format: `act_...`) |
+| `META_ACCESS_TOKEN` | Meta Marketing API access token |
+
+Get your access token from [Meta for Developers](https://developers.facebook.com/tools/explorer/).
+
+### Leadspedia Integration (Optional)
+
+| Variable | Description |
+|----------|-------------|
+| `LEADSPEDIA_API_KEY` | API key from Leadspedia (Settings → System Settings → Security) |
+| `LEADSPEDIA_API_SECRET` | API secret from Leadspedia (Settings → Users → [Your User] → API Settings) |
+| `LEADSPEDIA_CAMPAIGN_MAP` | JSON mapping of Meta campaign IDs to Leadspedia affiliates |
+
+**Campaign Mapping Example:**
+
+```bash
+LEADSPEDIA_CAMPAIGN_MAP={"120210123456789012": {"affiliate_id": "123", "vertical": "auto"}}
+```
+
+### Alerting (Optional)
+
+**Email Alerts:**
+
+| Variable | Description |
+|----------|-------------|
+| `ALERT_EMAIL_ENABLED` | Set to `true` to enable |
+| `ALERT_EMAIL_TO` | Recipient email address |
+| `ALERT_EMAIL_FROM` | Sender email address |
+| `ALERT_SMTP_HOST` | SMTP server hostname |
+| `ALERT_SMTP_PORT` | SMTP port (typically 587 for TLS) |
+| `ALERT_SMTP_USER` | SMTP username |
+| `ALERT_SMTP_PASSWORD` | SMTP password |
+
+**Slack Alerts:**
+
+| Variable | Description |
+|----------|-------------|
+| `ALERT_SLACK_ENABLED` | Set to `true` to enable |
+| `ALERT_SLACK_WEBHOOK_URL` | Slack incoming webhook URL |
+
+**Alert Thresholds:**
+
+```bash
+ALERT_THRESHOLDS={"default": {"min_sell_rate": 95, "min_roi": 20}, "auto": {"min_sell_rate": 90}}
+```
+
+### Google Sheets Export (Optional)
+
+| Variable | Description |
+|----------|-------------|
+| `GOOGLE_SHEETS_ENABLED` | Set to `true` to enable |
+| `GOOGLE_SERVICE_ACCOUNT_JSON_PATH` | Path to service account JSON file |
+| `GOOGLE_SHEET_ID` | Target Google Sheet ID |
+
+---
+
+## Project Structure
+
+```
+meta-ads-api/
+├── app/
+│   ├── alerts/           # Alert monitoring and notification channels
+│   ├── analysis/         # Data analysis and LLM export utilities
+│   ├── cache/            # SQLite caching layer
+│   ├── export/           # CSV and Google Sheets export
+│   ├── leadspedia/       # Leadspedia API client and matching logic
+│   ├── meta/             # Meta Graph API client and insights
+│   ├── metrics/          # CPL and revenue calculations
+│   ├── pages/            # Additional Streamlit pages
+│   ├── config.py         # Configuration management
+│   ├── config_manager.py # Campaign configuration UI
+│   └── dashboard.py      # Main Streamlit application
+├── leadspedia_llm_docs/  # Complete Leadspedia API documentation for LLMs
+├── config.example.env.txt
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Leadspedia API Documentation for LLMs
+
+This repository includes comprehensive Leadspedia API documentation in `leadspedia_llm_docs/` designed specifically for use with Large Language Models (LLMs).
+
+### What's Included
+
+- **Complete API Reference**: All endpoints with parameters, types, and examples
+- **Quick Reference Guide**: Common operations and endpoint lookup
+- **Organized by Resource**: Leads, campaigns, affiliates, advertisers, reports, etc.
+
+### Using with LLMs
+
+The documentation is formatted for easy consumption by AI assistants:
+
+```
+leadspedia_llm_docs/
+├── INDEX.md              # Overview and authentication guide
+├── QUICK_REFERENCE.md    # Fast endpoint lookup table
+├── leads.md              # Leads API endpoints
+├── leadsReports.md       # Lead reporting endpoints
+├── campaigns.md          # Campaign management
+├── affiliates.md         # Affiliate management
+├── advertisers.md        # Advertiser management
+├── conversions.md        # Conversion tracking
+├── offers.md             # Offer management
+└── ... (20+ resource files)
+```
+
+### Example LLM Prompt
+
+```
+I'm building an integration with Leadspedia. Using the documentation in 
+leadspedia_llm_docs/, help me write code to:
+1. Fetch all leads for a date range
+2. Get conversion data for those leads
+3. Calculate revenue by affiliate
+```
+
+---
+
+## Remote Access (Optional)
+
+For secure remote access without exposing ports, we recommend **Cloudflare Tunnel**:
+
+1. Install cloudflared: `brew install cloudflare/cloudflare/cloudflared`
+2. Authenticate: `cloudflared tunnel login`
+3. Create tunnel: `cloudflared tunnel create my-dashboard`
+4. Configure routing to `localhost:8501`
+5. Add **Cloudflare Access** for authentication (email OTP, SSO, etc.)
+
+Benefits:
+- No ports exposed on your network
+- End-to-end encryption
+- Built-in authentication
+- Free tier available
+
+See [Cloudflare Tunnel Documentation](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) for details.
+
+---
+
+## Security Best Practices
+
+### Credentials
+
+- **Never commit `.env`** - It's in `.gitignore` by default
+- **Use `chmod 600`** on `.env` and any credential files
+- **Rotate tokens regularly** - Especially Meta access tokens
+
+### Google Sheets Service Account
+
+If using Google Sheets export:
 
 ```bash
 mkdir -p .secrets
 chmod 700 .secrets
+mv your-service-account.json .secrets/google_service_account.json
 chmod 600 .secrets/google_service_account.json
 ```
 
+### File Permissions
 
+The dashboard will warn you if `.env` permissions are too open.
+
+---
+
+## API References
+
+- [Meta Marketing API](https://developers.facebook.com/docs/marketing-api/)
+- [Meta Graph API Explorer](https://developers.facebook.com/tools/explorer/)
+- [Leadspedia API](https://api.leadspedia.com/core/v2/) (see `leadspedia_llm_docs/` for complete reference)
+- [Streamlit Documentation](https://docs.streamlit.io/)
+
+---
+
+## Requirements
+
+- Python 3.10+
+- Meta Marketing API access
+- Leadspedia account (optional, for revenue tracking)
+
+### Python Dependencies
+
+```
+streamlit>=1.37,<2
+pandas>=2.2,<3
+requests>=2.32,<3
+python-dotenv>=1.0,<2
+tenacity>=9.0,<10
+gspread>=6.1,<7        # Optional: Google Sheets
+google-auth>=2.35,<3   # Optional: Google Sheets
+```
+
+---
+
+## License
+
+MIT License - See LICENSE file for details.
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
+Please ensure no credentials or environment-specific paths are included in commits.

@@ -16,6 +16,9 @@ __pycache__/
 .data/
 .secrets/
 
+# Local deployment docs (contain environment-specific info)
+docs/CLOUDFLARE_TUNNEL.md
+
 # OS
 .DS_Store
 
