@@ -157,8 +157,6 @@ class LeadspediaClient:
         """
         url = urljoin(self.base_url, endpoint.lstrip("/"))
 
-        print(f"[DEBUG] Leadspedia API GET (Basic Auth): {url}")
-        print(f"[DEBUG] Params: {params}")
         
         resp = self._get_session().get(
             url,
@@ -167,8 +165,6 @@ class LeadspediaClient:
             timeout=self.timeout,
         )
         
-        print(f"[DEBUG] Response status: {resp.status_code}")
-        print(f"[DEBUG] Response text (first 500 chars): {resp.text[:500] if resp.text else 'empty'}")
         
         self._raise_for_api_error(resp)
         return resp.json()
@@ -202,14 +198,9 @@ class LeadspediaClient:
         if params:
             query_params.update(params)
 
-        print(f"[DEBUG] Leadspedia API GET: {url}")
-        print(f"[DEBUG] Base URL: {self.base_url}")
-        print(f"[DEBUG] Using api_key/api_secret auth (key present: {bool(self.api_key)}, secret present: {bool(self.api_secret)})")
         
         resp = self._get_session().get(url, params=query_params, timeout=self.timeout)
         
-        print(f"[DEBUG] Response status: {resp.status_code}")
-        print(f"[DEBUG] Response text (first 500 chars): {resp.text[:500] if resp.text else 'empty'}")
         
         self._raise_for_api_error(resp)
         return resp.json()

@@ -69,14 +69,10 @@ def fetch_verticals(client: LeadspediaClient) -> List[LeadspediaVertical]:
     logger = logging.getLogger(__name__)
     
     logger.info("fetch_verticals() called")
-    print("[DEBUG] fetch_verticals() called")  # Streamlit console output
     
     try:
         # Use the reports endpoint with Basic Auth
         # This endpoint requires fromDate parameter
-        print(f"[DEBUG] Making API call to 'reports/getVerticalsReport.do'")
-        print(f"[DEBUG] Client API key present: {bool(client.api_key)}")
-        print(f"[DEBUG] Client API secret present: {bool(client.api_secret)}")
         
         # Use a wide date range to get all verticals
         from datetime import date, timedelta
@@ -92,9 +88,6 @@ def fetch_verticals(client: LeadspediaClient) -> List[LeadspediaVertical]:
         
         response = client.get_with_basic_auth("reports/getVerticalsReport.do", params=params)
         
-        print(f"[DEBUG] API response received: {type(response)}")
-        print(f"[DEBUG] Response keys: {response.keys() if isinstance(response, dict) else 'N/A'}")
-        print(f"[DEBUG] Full response (first 2000 chars): {str(response)[:2000]}")
         
         # The response format may be different for reports endpoint
         # Try multiple possible response structures
@@ -104,21 +97,16 @@ def fetch_verticals(client: LeadspediaClient) -> List[LeadspediaVertical]:
         if isinstance(response, list):
             data = response
         
-        print(f"[DEBUG] Extracted data: {data}")
         
         if isinstance(data, list):
             verticals = [LeadspediaVertical.from_api_response(v) for v in data if isinstance(v, dict)]
-            print(f"[DEBUG] Parsed {len(verticals)} verticals")
             return verticals
         else:
-            print(f"[DEBUG] Data is not a list: {type(data)}")
             
     except Exception as e:
-        print(f"[DEBUG] Exception in fetch_verticals: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
     
-    print("[DEBUG] Returning empty list")
     return []
 
 
@@ -148,29 +136,22 @@ def fetch_verticals_cached(
     ttl_seconds: int = 3600,  # 1 hour cache
 ) -> List[LeadspediaVertical]:
     """Fetch verticals with caching."""
-    print("[DEBUG] fetch_verticals_cached() called")
     
     cache_key = sha256_key("leadspedia_verticals")
     cached = cache.get(cache_key, ttl_seconds=ttl_seconds)
     
     if cached:
-        print("[DEBUG] Found cached verticals")
         try:
             data = json.loads(cached)
-            print(f"[DEBUG] Returning {len(data)} cached verticals")
             return [LeadspediaVertical(id=v["id"], name=v["name"], status=v["status"]) for v in data]
         except (json.JSONDecodeError, KeyError) as e:
-            print(f"[DEBUG] Cache parse error: {e}")
     else:
-        print("[DEBUG] No cached verticals, fetching fresh")
     
     verticals = fetch_verticals(client)
-    print(f"[DEBUG] fetch_verticals returned {len(verticals)} verticals")
     
     if verticals:
         cache_data = [{"id": v.id, "name": v.name, "status": v.status} for v in verticals]
         cache.set(cache_key, json.dumps(cache_data))
-        print("[DEBUG] Cached verticals")
     
     return verticals
 

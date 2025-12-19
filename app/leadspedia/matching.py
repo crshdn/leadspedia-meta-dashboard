@@ -147,9 +147,6 @@ def match_meta_to_leadspedia(
     # Calculate total Meta leads across ALL campaigns for global proportional distribution
     total_global_meta_leads = int(meta_df["leads"].sum()) if "leads" in meta_df.columns else 0
     
-    print(f"[DEBUG] Global LP stats: total={global_lp_stats['total']}, sold={global_lp_stats['sold']}, revenue=${global_lp_stats['revenue']:.2f}")
-    print(f"[DEBUG] Total Meta leads across all campaigns: {total_global_meta_leads}")
-    print(f"[DEBUG] Total Meta rows: {len(meta_df)}")
     
     # Process each row in the Meta dataframe
     # Distribute LP data proportionally based on each row's share of GLOBAL Meta leads
@@ -181,8 +178,6 @@ def match_meta_to_leadspedia(
     matched_revenue = sum(m.lp_revenue for m in matched_data)
     match_rate = (matched_lp_count / meta_lead_count * 100) if meta_lead_count > 0 else 0.0
     
-    print(f"[DEBUG] Matching complete: {len(matched_data)} rows created")
-    print(f"[DEBUG] Distributed LP totals: {matched_lp_count} leads, {matched_sold_count} sold, ${matched_revenue:.2f} revenue")
 
     return MatchResult(
         matched_data=matched_data,
@@ -410,9 +405,6 @@ def fetch_and_match_data_cached(
     # Fetch all Leadspedia data for the affiliate
     all_dispositions: List[LeadDisposition] = []
     
-    print(f"[DEBUG] fetch_and_match_data_cached called")
-    print(f"[DEBUG] affiliate_id: {affiliate_id}")
-    print(f"[DEBUG] date range: {since} to {until}")
     
     if affiliate_id:
         # Fetch by affiliate ID (simpler approach for single affiliate)
@@ -424,39 +416,26 @@ def fetch_and_match_data_cached(
         
         # Try fetching all leads first
         try:
-            print(f"[DEBUG] Fetching ALL leads with query: {query.to_params()}")
             rows = list(fetch_leads(lp_client, query))
-            print(f"[DEBUG] All leads returned: {len(rows)}")
             if rows:
-                print(f"[DEBUG] First row sample: {rows[0]}")
             all_dispositions = parse_leads_to_dispositions(rows)
-            print(f"[DEBUG] Parsed dispositions from getAll: {len(all_dispositions)}")
             if all_dispositions:
                 d = all_dispositions[0]
-                print(f"[DEBUG] First disposition parsed: lead_id={d.lead_id}, status={d.status}, revenue={d.revenue}, cost={d.cost}, is_sold={d.is_sold}")
                 sold_count = sum(1 for d in all_dispositions if d.is_sold)
                 total_revenue = sum(float(d.revenue) for d in all_dispositions)
-                print(f"[DEBUG] Summary: {sold_count} sold, total revenue: ${total_revenue:.2f}")
         except Exception as e:
-            print(f"[DEBUG] Error fetching all leads: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
         
         # Also try fetching sold leads specifically (may have more revenue data)
         try:
-            print(f"[DEBUG] Fetching SOLD leads with query: {query.to_params()}")
             sold_rows = list(fetch_sold_leads(lp_client, query))
-            print(f"[DEBUG] Sold leads returned: {len(sold_rows)}")
             if sold_rows:
-                print(f"[DEBUG] First sold row sample: {sold_rows[0]}")
                 # Parse sold leads and merge/update dispositions
                 sold_dispositions = parse_leads_to_dispositions(sold_rows)
-                print(f"[DEBUG] Parsed sold dispositions: {len(sold_dispositions)}")
                 if sold_dispositions:
                     d = sold_dispositions[0]
-                    print(f"[DEBUG] First sold disposition: lead_id={d.lead_id}, status={d.status}, revenue={d.revenue}, is_sold={d.is_sold}")
                     sold_total_revenue = sum(float(d.revenue) for d in sold_dispositions)
-                    print(f"[DEBUG] Sold leads total revenue: ${sold_total_revenue:.2f}")
                 
                 # If we got sold leads but no all leads, use sold leads
                 if not all_dispositions and sold_dispositions:
@@ -479,7 +458,6 @@ def fetch_and_match_data_cached(
                         if sold_disp.lead_id not in existing_ids:
                             all_dispositions.append(sold_disp)
         except Exception as e:
-            print(f"[DEBUG] Error fetching sold leads: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
     

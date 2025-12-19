@@ -97,30 +97,6 @@ def main() -> None:
         load_objects = st.button("Load campaigns/ad sets/ads", disabled=not bool(effective_token) or not bool(cfg.meta_ad_account_id))
 
         st.subheader("Integrations")
-        col1, col2 = st.columns(2)
-        with col1:
-            if cfg.leadspedia_enabled:
-                st.success("Leadspedia: Connected")
-            else:
-                st.warning("Leadspedia: Not configured")
-        with col2:
-            if cfg.alerts_enabled:
-                st.success("Alerts: Enabled")
-            else:
-                st.info("Alerts: Disabled")
-
-        st.subheader("About")
-        st.write(
-            {
-                "meta_api_version": cfg.meta_api_version,
-                "cache_db_path": str(cfg.cache_db_path),
-                "cache_ttl_seconds": cfg.cache_ttl_seconds,
-                "lead_action_types": list(cfg.meta_lead_action_types),
-                "leadspedia_enabled": cfg.leadspedia_enabled,
-                "campaign_mappings": len(cfg.leadspedia_campaign_map),
-            }
-        )
-
         st.subheader("Exports")
         sheets_enabled = bool(cfg.google_sheets_spreadsheet_id and cfg.google_service_account_json_path)
         if not sheets_enabled:
@@ -319,18 +295,6 @@ def main() -> None:
                 spend_sum = float(pd.to_numeric(df["spend"], errors="coerce").fillna(0).sum())
                 leads_sum = int(pd.to_numeric(df["leads"], errors="coerce").fillna(0).sum())
                 cpl = (spend_sum / leads_sum) if leads_sum > 0 else None
-                st.write({"computed_spend": spend_sum, "computed_leads": leads_sum, "computed_cpl": cpl})
-
-                st.caption("Optional: paste what Ads Manager shows to compare quickly.")
-                am_spend = st.number_input("Ads Manager spend", min_value=0.0, value=0.0, step=10.0)
-                am_leads = st.number_input("Ads Manager leads", min_value=0, value=0, step=1)
-                if am_spend > 0 or am_leads > 0:
-                    st.write(
-                        {
-                            "spend_diff": spend_sum - float(am_spend),
-                            "leads_diff": leads_sum - int(am_leads),
-                        }
-                    )
 
     with tab_age_gender:
         if st.button("Refresh age/gender"):
@@ -374,21 +338,6 @@ def _render_alerts_tab(
         with col3:
             st.metric("Max Unsold Time", f"{thresholds.max_unsold_time_minutes} min")
         
-        st.markdown("**Alert Channels**")
-        channel_status = []
-        if cfg.alert_email_enabled:
-            channel_status.append(f"Email: {cfg.alert_email_to}")
-        if cfg.alert_slack_enabled:
-            channel_status.append("Slack: Enabled")
-        channel_status.append("Dashboard: Always enabled")
-        
-        for status in channel_status:
-            st.write(f"  {status}")
-        
-        if cfg.alert_thresholds_by_vertical:
-            st.markdown("**Vertical-Specific Thresholds**")
-            for vertical, vt in cfg.alert_thresholds_by_vertical.items():
-                st.write(f"  {vertical}: min_sell_rate={vt.min_sell_rate}%, min_roi={vt.min_roi}%")
     
     st.divider()
     
@@ -549,18 +498,13 @@ def _render_config_tab(
     st.markdown("#### Leadspedia Verticals")
     
     if st.button("Refresh Verticals from Leadspedia", key="refresh_verticals"):
-        print("[DEBUG] Refresh Verticals button clicked")
-        print(f"[DEBUG] lp_client is not None: {lp_client is not None}")
-        print(f"[DEBUG] lp_client.api_key present: {bool(lp_client.api_key) if lp_client else 'N/A'}")
         st.toast("Fetching verticals...", icon="🔄")
         try:
             result = fetch_verticals_cached(lp_client, cache, ttl_seconds=60)
-            print(f"[DEBUG] fetch_verticals_cached returned: {len(result)} items")
             st.session_state["lp_verticals"] = result
             if not result:
-                st.error("No verticals returned. Check terminal for debug logs.")
+                st.error("No verticals returned from Leadspedia.")
         except Exception as e:
-            print(f"[DEBUG] Exception in button handler: {e}")
             st.error(f"Error fetching verticals: {e}")
     
     verticals: list[LeadspediaVertical] = st.session_state.get("lp_verticals", [])
