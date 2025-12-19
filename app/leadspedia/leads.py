@@ -53,6 +53,187 @@ class LeadspediaAffiliate:
         )
 
 
+@dataclass
+class LeadspediaAdvertiser:
+    """Represents a Leadspedia advertiser (buyer)."""
+    
+    id: str
+    name: str
+    status: str
+    email: Optional[str] = None
+    company: Optional[str] = None
+    
+    @classmethod
+    def from_api_response(cls, data: Dict[str, Any]) -> "LeadspediaAdvertiser":
+        return cls(
+            id=str(data.get("advertiserID") or data.get("id") or ""),
+            name=str(data.get("advertiserName") or data.get("name") or ""),
+            status=str(data.get("status") or "active"),
+            email=data.get("email"),
+            company=data.get("company"),
+        )
+
+
+@dataclass
+class LeadspediaContract:
+    """Represents a Leadspedia lead distribution contract."""
+    
+    id: str
+    name: str
+    advertiser_id: str
+    advertiser_name: str
+    status: str
+    price: Decimal
+    vertical_id: Optional[str] = None
+    vertical_name: Optional[str] = None
+    daily_cap: Optional[int] = None
+    leads_today: Optional[int] = None
+    
+    @classmethod
+    def from_api_response(cls, data: Dict[str, Any]) -> "LeadspediaContract":
+        price_val = data.get("price") or data.get("pricePerLead") or "0"
+        try:
+            price = Decimal(str(price_val))
+        except (InvalidOperation, ValueError):
+            price = Decimal("0")
+        
+        daily_cap = data.get("dailyCap") or data.get("leadsDaily")
+        leads_today = data.get("leadsToday") or data.get("todayLeads")
+        
+        return cls(
+            id=str(data.get("contractID") or data.get("id") or ""),
+            name=str(data.get("contractName") or data.get("name") or ""),
+            advertiser_id=str(data.get("advertiserID") or ""),
+            advertiser_name=str(data.get("advertiserName") or ""),
+            status=str(data.get("status") or "active"),
+            price=price,
+            vertical_id=str(data.get("verticalID") or "") if data.get("verticalID") else None,
+            vertical_name=data.get("verticalName"),
+            daily_cap=int(daily_cap) if daily_cap else None,
+            leads_today=int(leads_today) if leads_today else None,
+        )
+
+
+def fetch_advertisers(client: LeadspediaClient) -> List[LeadspediaAdvertiser]:
+    """
+    Fetch all advertisers (buyers) from Leadspedia.
+    
+    Args:
+        client: Leadspedia API client
+        
+    Returns:
+        List of LeadspediaAdvertiser objects
+    """
+    try:
+        response = client.get("advertisers/getAll.do")
+        
+        # API returns: { "response": { "data": [...] } }
+        inner_response = response.get("response", {})
+        if isinstance(inner_response, dict):
+            data = inner_response.get("data", [])
+        else:
+            data = response.get("data") or []
+        
+        if isinstance(data, list):
+            return [LeadspediaAdvertiser.from_api_response(a) for a in data if isinstance(a, dict)]
+    except Exception as e:
+        logger.error(f"Failed to fetch advertisers: {e}")
+    return []
+
+
+def fetch_contracts(client: LeadspediaClient) -> List[LeadspediaContract]:
+    """
+    Fetch all lead distribution contracts from Leadspedia.
+    
+    Args:
+        client: Leadspedia API client
+        
+    Returns:
+        List of LeadspediaContract objects
+    """
+    try:
+        response = client.get("leadDistributionContracts/getAll.do")
+        
+        # API returns: { "response": { "data": [...] } }
+        inner_response = response.get("response", {})
+        if isinstance(inner_response, dict):
+            data = inner_response.get("data", [])
+        else:
+            data = response.get("data") or []
+        
+        if isinstance(data, list):
+            return [LeadspediaContract.from_api_response(c) for c in data if isinstance(c, dict)]
+    except Exception as e:
+        logger.error(f"Failed to fetch contracts: {e}")
+    return []
+
+
+def fetch_advertisers_cached(
+    client: LeadspediaClient,
+    cache: SqliteCache,
+    ttl_seconds: int = 3600,
+) -> List[LeadspediaAdvertiser]:
+    """Fetch advertisers with caching."""
+    cache_key = sha256_key("leadspedia_advertisers")
+    cached = cache.get(cache_key, ttl_seconds=ttl_seconds)
+    
+    if cached:
+        try:
+            data = json.loads(cached)
+            return [LeadspediaAdvertiser(
+                id=a["id"], name=a["name"], status=a["status"],
+                email=a.get("email"), company=a.get("company")
+            ) for a in data]
+        except (json.JSONDecodeError, KeyError):
+            pass
+    
+    advertisers = fetch_advertisers(client)
+    
+    if advertisers:
+        cache_data = [{"id": a.id, "name": a.name, "status": a.status, 
+                       "email": a.email, "company": a.company} for a in advertisers]
+        cache.set(cache_key, json.dumps(cache_data))
+    
+    return advertisers
+
+
+def fetch_contracts_cached(
+    client: LeadspediaClient,
+    cache: SqliteCache,
+    ttl_seconds: int = 300,  # 5 min cache - contracts change more often
+) -> List[LeadspediaContract]:
+    """Fetch contracts with caching."""
+    cache_key = sha256_key("leadspedia_contracts")
+    cached = cache.get(cache_key, ttl_seconds=ttl_seconds)
+    
+    if cached:
+        try:
+            data = json.loads(cached)
+            return [LeadspediaContract(
+                id=c["id"], name=c["name"], advertiser_id=c["advertiser_id"],
+                advertiser_name=c["advertiser_name"], status=c["status"],
+                price=Decimal(str(c["price"])), vertical_id=c.get("vertical_id"),
+                vertical_name=c.get("vertical_name"), daily_cap=c.get("daily_cap"),
+                leads_today=c.get("leads_today")
+            ) for c in data]
+        except (json.JSONDecodeError, KeyError):
+            pass
+    
+    contracts = fetch_contracts(client)
+    
+    if contracts:
+        cache_data = [{
+            "id": c.id, "name": c.name, "advertiser_id": c.advertiser_id,
+            "advertiser_name": c.advertiser_name, "status": c.status,
+            "price": str(c.price), "vertical_id": c.vertical_id,
+            "vertical_name": c.vertical_name, "daily_cap": c.daily_cap,
+            "leads_today": c.leads_today
+        } for c in contracts]
+        cache.set(cache_key, json.dumps(cache_data))
+    
+    return contracts
+
+
 def fetch_verticals(client: LeadspediaClient) -> List[LeadspediaVertical]:
     """
     Fetch all verticals from Leadspedia.
@@ -349,7 +530,7 @@ class LeadDisposition:
     raw_data: Dict[str, Any]
 
     @classmethod
-    def from_api_response(cls, data: Dict[str, Any]) -> "LeadDisposition":
+    def from_api_response(cls, data: Dict[str, Any], from_sold_endpoint: bool = False) -> "LeadDisposition":
         """Parse a lead disposition from API response data."""
         # Leadspedia field mapping:
         # - sold: "Yes" or "No" (status indicator)
@@ -362,11 +543,18 @@ class LeadDisposition:
         # - returned: "Yes" or "No" (return status from getSold.do)
         
         # Determine status from Leadspedia fields
+        # If from_sold_endpoint=True, these leads are sold by definition (from getSold.do)
         sold_field = str(data.get("sold", "")).lower()
         returned_field = str(data.get("returned", "")).lower()
         status_field = data.get("status") or data.get("disposition")
         
-        if status_field:
+        if from_sold_endpoint:
+            # Leads from getSold.do are sold by definition (unless returned)
+            if returned_field == "yes":
+                status = "returned"
+            else:
+                status = "sold"
+        elif status_field:
             status = str(status_field).lower()
         elif returned_field == "yes":
             status = "returned"
@@ -446,12 +634,14 @@ class LeadDisposition:
 
 def parse_leads_to_dispositions(
     rows: Iterable[Dict[str, Any]],
+    from_sold_endpoint: bool = False,
 ) -> List[LeadDisposition]:
     """
     Parse raw API lead data into LeadDisposition objects.
     
     Args:
         rows: Raw lead data from API
+        from_sold_endpoint: If True, all leads are marked as 'sold' (from getSold.do)
         
     Returns:
         List of parsed LeadDisposition objects
@@ -459,7 +649,7 @@ def parse_leads_to_dispositions(
     dispositions = []
     for row in rows:
         try:
-            disposition = LeadDisposition.from_api_response(row)
+            disposition = LeadDisposition.from_api_response(row, from_sold_endpoint=from_sold_endpoint)
             dispositions.append(disposition)
         except Exception:
             # Skip malformed records
@@ -600,4 +790,93 @@ def aggregate_lead_stats(df: pd.DataFrame) -> Dict[str, Any]:
         "avg_revenue_per_lead": float(avg_revenue_per_lead),
         "avg_revenue_per_sold": float(avg_revenue_per_sold),
     }
+
+
+@dataclass
+class BuyerPerformance:
+    """Aggregated performance metrics for a buyer."""
+    
+    buyer_name: str
+    leads_sold: int
+    total_revenue: Decimal
+    avg_price: Decimal
+    pct_of_total: float
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "buyer_name": self.buyer_name,
+            "leads_sold": self.leads_sold,
+            "total_revenue": float(self.total_revenue),
+            "avg_price": float(self.avg_price),
+            "pct_of_total": self.pct_of_total,
+        }
+
+
+def aggregate_by_buyer(dispositions: List[LeadDisposition]) -> List[BuyerPerformance]:
+    """
+    Aggregate lead dispositions by buyer name.
+    
+    Args:
+        dispositions: List of LeadDisposition objects
+        
+    Returns:
+        List of BuyerPerformance objects sorted by revenue descending
+    """
+    if not dispositions:
+        return []
+    
+    # Filter to sold leads only
+    sold_leads = [d for d in dispositions if d.is_sold]
+    if not sold_leads:
+        return []
+    
+    # Aggregate by buyer
+    buyer_stats: Dict[str, Dict[str, Any]] = {}
+    total_revenue = Decimal("0")
+    
+    for d in sold_leads:
+        buyer = d.buyer_name or "Unknown"
+        if buyer not in buyer_stats:
+            buyer_stats[buyer] = {"leads": 0, "revenue": Decimal("0")}
+        buyer_stats[buyer]["leads"] += 1
+        buyer_stats[buyer]["revenue"] += d.revenue
+        total_revenue += d.revenue
+    
+    # Build performance objects
+    results = []
+    for buyer, stats in buyer_stats.items():
+        leads = stats["leads"]
+        revenue = stats["revenue"]
+        avg_price = revenue / leads if leads > 0 else Decimal("0")
+        pct = float(revenue / total_revenue * 100) if total_revenue > 0 else 0.0
+        
+        results.append(BuyerPerformance(
+            buyer_name=buyer,
+            leads_sold=leads,
+            total_revenue=revenue,
+            avg_price=avg_price,
+            pct_of_total=pct,
+        ))
+    
+    # Sort by revenue descending
+    results.sort(key=lambda x: x.total_revenue, reverse=True)
+    return results
+
+
+def buyer_performance_to_dataframe(performances: List[BuyerPerformance]) -> pd.DataFrame:
+    """Convert buyer performance list to DataFrame for display."""
+    if not performances:
+        return pd.DataFrame(columns=["Buyer", "Leads Sold", "Revenue", "Avg Price", "% of Total"])
+    
+    data = []
+    for p in performances:
+        data.append({
+            "Buyer": p.buyer_name,
+            "Leads Sold": p.leads_sold,
+            "Revenue": f"${float(p.total_revenue):,.2f}",
+            "Avg Price": f"${float(p.avg_price):,.2f}",
+            "% of Total": f"{p.pct_of_total:.1f}%",
+        })
+    
+    return pd.DataFrame(data)
 

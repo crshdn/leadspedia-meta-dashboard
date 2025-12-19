@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.2] - 2025-12-19
+
+### Added
+- **Leadspedia Tab Structure**: New tabbed interface with sub-tabs:
+  - Overview: Verticals, leads, sold leads summary
+  - Buyers: Buyer performance breakdown
+  - Contracts: Lead distribution contracts directory
+  - Advertisers: Full advertiser directory
+- **Meta Tab Enhancements**: Campaign status toggle (Live/Paused)
+- Combined Analysis tab with ROI and problem detection
+
+### Fixed
+- Leadspedia API response parsing for nested `response.data` structure
+- Advertisers and Contracts endpoints now correctly fetch data
+- Meta campaign status now displays correctly (was showing N/A)
+- LeadQuery parameter names (`since`/`until` instead of `start_date`/`end_date`)
+
+### Removed  
+- Debug print statements from Leadspedia API calls
+
+---
+
 ## [1.0.1] - 2025-12-19
 
 ### Changed

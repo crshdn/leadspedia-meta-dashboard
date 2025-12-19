@@ -33,7 +33,20 @@ from app.metrics.revenue import (
 from app.alerts.monitor import AlertMonitor, Alert, AlertSeverity, AlertType
 from app.alerts.channels import create_channels_from_config, DashboardAlertChannel
 from app.config_manager import ConfigManager, CampaignConfig, CampaignVerticalMapping
-from app.leadspedia.leads import fetch_verticals_cached, LeadspediaVertical
+from app.leadspedia.leads import (
+    fetch_verticals_cached,
+    fetch_advertisers_cached,
+    fetch_contracts_cached,
+    aggregate_by_buyer,
+    buyer_performance_to_dataframe,
+    parse_leads_to_dispositions,
+    LeadspediaVertical,
+    LeadspediaAdvertiser,
+    LeadspediaContract,
+    BuyerPerformance,
+    LeadQuery,
+    fetch_sold_leads,
+)
 
 
 def _maybe_warn_on_dotenv_permissions(dotenv_path: Path) -> None:
@@ -44,8 +57,8 @@ def _maybe_warn_on_dotenv_permissions(dotenv_path: Path) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Meta Lead Ads Dashboard", layout="wide")
-    st.title("Meta Lead Ads Dashboard")
+    st.set_page_config(page_title="Meta-Leadspedia Dashboard", layout="wide")
+    st.title("Meta-Leadspedia Dashboard")
     st.caption("Local reporting dashboard for Lead Ads with revenue tracking via Leadspedia.")
 
     dotenv_path = Path(".env")
@@ -56,11 +69,6 @@ def main() -> None:
     cfg.ensure_local_dirs()
 
     with st.sidebar:
-        # Navigation to Analysis page
-        st.subheader("Navigation")
-        st.markdown("📊 [Go to CPL Analysis](/analysis)")
-        st.divider()
-        
         st.subheader("Connection")
         st.text_input("Ad Account ID", value=cfg.meta_ad_account_id, disabled=True)
 
@@ -167,17 +175,6 @@ def main() -> None:
         )
 
     st.divider()
-    st.subheader("Status")
-
-    status = asdict(cfg)
-    status["meta_access_token"] = "set" if effective_token else "missing"
-    status["cache_db_path"] = str(cfg.cache_db_path)
-    status["google_service_account_json_path"] = (
-        str(cfg.google_service_account_json_path) if cfg.google_service_account_json_path else None
-    )
-    st.json(status)
-
-    st.divider()
     st.subheader("Data")
 
     def run_query(breakdowns: list[str]) -> pd.DataFrame:
@@ -209,29 +206,191 @@ def main() -> None:
         )
         alert_monitor = AlertMonitor(cfg, cache, channels)
 
-    # Create tabs - conditionally add Revenue, Alerts, and Config tabs
-    if cfg.leadspedia_enabled:
-        if cfg.alerts_enabled:
-            tab_revenue, tab_alerts, tab_config, tab_overall, tab_age_gender, tab_placement, tab_device = st.tabs(
-                ["Revenue & ROI", "Alerts", "Configuration", "Overall (ad level)", "Age/Gender", "Placement", "Device"]
-            )
-        else:
-            tab_revenue, tab_config, tab_overall, tab_age_gender, tab_placement, tab_device = st.tabs(
-                ["Revenue & ROI", "Configuration", "Overall (ad level)", "Age/Gender", "Placement", "Device"]
-            )
-            tab_alerts = None
-    else:
-        tab_overall, tab_age_gender, tab_placement, tab_device = st.tabs(
-            ["Overall (ad level)", "Age/Gender", "Placement", "Device"]
-        )
-        tab_revenue = None
-        tab_alerts = None
-        tab_config = None
+    # Campaign status filter helper
+    def filter_campaigns_by_status(campaigns_list: list, show_live: bool, show_paused: bool) -> list:
+        """Filter campaigns by their effective status."""
+        if show_live and show_paused:
+            return campaigns_list
+        filtered = []
+        for c in campaigns_list:
+            status = c.status.upper() if c.status else ""
+            is_active = status in ("ACTIVE", "")
+            if show_live and is_active:
+                filtered.append(c)
+            elif show_paused and not is_active:
+                filtered.append(c)
+        return filtered
 
-    # Configuration tab (if Leadspedia is enabled)
-    if cfg.leadspedia_enabled and lp_client is not None:
-        if tab_config is not None:
-            with tab_config:
+    # Get campaign status filter from session state
+    show_live = st.session_state.get("show_live_campaigns", True)
+    show_paused = st.session_state.get("show_paused_campaigns", False)
+
+    # Create top-level tabs: Meta | Leadspedia | Combined Analysis
+    if cfg.leadspedia_enabled:
+        tab_meta, tab_leadspedia, tab_combined = st.tabs(["📊 Meta", "💰 Leadspedia", "📈 Combined Analysis"])
+    else:
+        tab_meta, = st.tabs(["📊 Meta"])
+        tab_leadspedia = None
+        tab_combined = None
+
+    # ============================================
+    # META TAB - All Meta Ads data
+    # ============================================
+    with tab_meta:
+        # Meta sub-tabs
+        meta_campaigns, meta_performance, meta_breakdowns, meta_cpl = st.tabs(
+            ["Campaigns", "Performance", "Breakdowns", "CPL Analysis"]
+        )
+        
+        # --- Campaigns Sub-Tab ---
+        with meta_campaigns:
+            st.markdown("### Campaign Overview")
+            
+            # Campaign status toggle
+            col1, col2, col3 = st.columns([1, 1, 4])
+            with col1:
+                live_toggle = st.checkbox("Live", value=show_live, key="toggle_live")
+                if live_toggle != show_live:
+                    st.session_state["show_live_campaigns"] = live_toggle
+            with col2:
+                paused_toggle = st.checkbox("Paused", value=show_paused, key="toggle_paused")
+                if paused_toggle != show_paused:
+                    st.session_state["show_paused_campaigns"] = paused_toggle
+            
+            # Refresh campaign data
+            if st.button("Refresh Campaigns", key="refresh_campaigns_meta"):
+                try:
+                    all_campaigns = list_campaigns(client, cfg.meta_ad_account_id)
+                    st.session_state["campaigns"] = all_campaigns
+                except MetaApiError as e:
+                    st.error(str(e))
+            
+            # Display campaigns
+            filtered_campaigns = filter_campaigns_by_status(campaigns, live_toggle, paused_toggle)
+            if filtered_campaigns:
+                campaign_data = []
+                for c in filtered_campaigns:
+                    campaign_data.append({
+                        "ID": c.id,
+                        "Name": c.name,
+                        "Status": c.status.replace("_", " ").title() if c.status else "Unknown",
+                    })
+                st.dataframe(pd.DataFrame(campaign_data), use_container_width=True)
+            else:
+                st.info("No campaigns found. Click 'Load campaigns/ad sets/ads' in the sidebar to load data.")
+        
+        # --- Performance Sub-Tab ---
+        with meta_performance:
+            st.markdown("### Overall Performance")
+            st.caption("Ad-level performance metrics from Meta Ads.")
+            
+            if st.button("Refresh Performance", key="refresh_overall_meta"):
+                st.session_state["df_overall"] = run_query([])
+            df = st.session_state.get("df_overall", pd.DataFrame())
+            _render_results(df, min_spend=min_spend, min_leads=min_leads, cfg=cfg, tab_key="overall")
+
+            with st.expander("Validation / Debug"):
+                st.caption(
+                    "Use this to confirm your lead action type mapping matches Ads Manager. "
+                    "If lead counts don't match, update META_LEAD_ACTION_TYPES."
+                )
+                q = InsightsQuery(
+                    ad_account_id=cfg.meta_ad_account_id,
+                    since=since,
+                    until=until,
+                    level="ad",
+                    breakdowns=[],
+                    campaign_ids=selected_campaign_ids,
+                    adset_ids=selected_adset_ids,
+                    ad_ids=selected_ad_ids,
+                )
+                if st.button("Show action types seen in this range", key="show_action_types"):
+                    try:
+                        summary = fetch_action_type_summary_cached(client, cache, q, ttl_seconds=cfg.cache_ttl_seconds)
+                        st.dataframe(summary, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Failed to load action type summary: {e}")
+        
+        # --- Breakdowns Sub-Tab ---
+        with meta_breakdowns:
+            st.markdown("### Breakdown Analysis")
+            
+            breakdown_age, breakdown_placement, breakdown_device = st.tabs(
+                ["Age/Gender", "Placement", "Device"]
+            )
+            
+            with breakdown_age:
+                if st.button("Refresh Age/Gender", key="refresh_age_gender"):
+                    st.session_state["df_age_gender"] = run_query(["age", "gender"])
+                df = st.session_state.get("df_age_gender", pd.DataFrame())
+                _render_results(df, min_spend=min_spend, min_leads=min_leads, cfg=cfg, tab_key="age_gender")
+            
+            with breakdown_placement:
+                if st.button("Refresh Placement", key="refresh_placement"):
+                    st.session_state["df_placement"] = run_query(["publisher_platform", "platform_position"])
+                df = st.session_state.get("df_placement", pd.DataFrame())
+                _render_results(df, min_spend=min_spend, min_leads=min_leads, cfg=cfg, tab_key="placement")
+            
+            with breakdown_device:
+                if st.button("Refresh Device", key="refresh_device"):
+                    st.session_state["df_device"] = run_query(["device_platform"])
+                df = st.session_state.get("df_device", pd.DataFrame())
+                _render_results(df, min_spend=min_spend, min_leads=min_leads, cfg=cfg, tab_key="device")
+        
+        # --- CPL Analysis Sub-Tab ---
+        with meta_cpl:
+            st.markdown("### CPL Analysis")
+            st.caption("For detailed CPL analysis with confidence scoring, use the dedicated analysis page.")
+            st.markdown("📊 [Go to CPL Analysis](/analysis)")
+
+    # ============================================
+    # LEADSPEDIA TAB - All Leadspedia data
+    # ============================================
+    if tab_leadspedia is not None and lp_client is not None:
+        with tab_leadspedia:
+            # Leadspedia sub-tabs
+            lp_overview, lp_buyers, lp_contracts, lp_advertisers, lp_config = st.tabs(
+                ["Overview", "Buyers", "Contracts", "Advertisers", "Configuration"]
+            )
+            
+            # --- Overview Sub-Tab ---
+            with lp_overview:
+                _render_leadspedia_overview(
+                    lp_client=lp_client,
+                    cache=cache,
+                    cfg=cfg,
+                    since=since,
+                    until=until,
+                    config_manager=config_manager,
+                )
+            
+            # --- Buyers Sub-Tab ---
+            with lp_buyers:
+                _render_leadspedia_buyers(
+                    lp_client=lp_client,
+                    cache=cache,
+                    cfg=cfg,
+                    since=since,
+                    until=until,
+                    config_manager=config_manager,
+                )
+            
+            # --- Contracts Sub-Tab ---
+            with lp_contracts:
+                _render_leadspedia_contracts(
+                    lp_client=lp_client,
+                    cache=cache,
+                )
+            
+            # --- Advertisers Sub-Tab ---
+            with lp_advertisers:
+                _render_leadspedia_advertisers(
+                    lp_client=lp_client,
+                    cache=cache,
+                )
+            
+            # --- Configuration Sub-Tab ---
+            with lp_config:
                 _render_config_tab(
                     lp_client=lp_client,
                     cache=cache,
@@ -240,10 +399,19 @@ def main() -> None:
                     campaigns=campaigns,
                 )
 
-    # Revenue & ROI tab (if Leadspedia is enabled)
-    if tab_revenue is not None and lp_client is not None:
-        with tab_revenue:
-            _render_revenue_tab(
+    # ============================================
+    # COMBINED ANALYSIS TAB - Meta + Leadspedia
+    # ============================================
+    if tab_combined is not None and lp_client is not None:
+        with tab_combined:
+            # Combined sub-tabs
+            combined_roi, combined_problems, combined_alerts = st.tabs(
+                ["ROI Overview", "Problem Areas", "Alerts"]
+            )
+            
+            # --- ROI Overview Sub-Tab ---
+            with combined_roi:
+                _render_combined_roi(
                 client=client,
                 lp_client=lp_client,
                 cache=cache,
@@ -258,61 +426,442 @@ def main() -> None:
                 config_manager=config_manager,
             )
 
-    # Alerts tab
-    if tab_alerts is not None and alert_monitor is not None:
-        with tab_alerts:
-            _render_alerts_tab(alert_monitor, dashboard_alert_channel, cache, cfg)
+            # --- Problem Areas Sub-Tab ---
+            with combined_problems:
+                _render_combined_problems(
+                    cfg=cfg,
+                    min_spend=min_spend,
+                )
+            
+            # --- Alerts Sub-Tab ---
+            with combined_alerts:
+                if alert_monitor is not None:
+                    _render_alerts_tab(alert_monitor, dashboard_alert_channel, cache, cfg)
+                else:
+                    st.info("Alerts are disabled. Enable them in your .env configuration.")
 
-    with tab_overall:
-        if st.button("Refresh overall"):
-            st.session_state["df_overall"] = run_query([])
-        df = st.session_state.get("df_overall", pd.DataFrame())
-        _render_results(df, min_spend=min_spend, min_leads=min_leads, cfg=cfg, tab_key="overall")
 
-        with st.expander("Validation / Debug (recommended the first time)"):
-            st.caption(
-                "Use this to confirm your lead action type mapping matches Ads Manager. "
-                "If lead counts don't match, update META_LEAD_ACTION_TYPES."
-            )
-            q = InsightsQuery(
-                ad_account_id=cfg.meta_ad_account_id,
+def _render_leadspedia_overview(
+    *,
+    lp_client: LeadspediaClient,
+    cache: SqliteCache,
+    cfg: AppConfig,
+    since: date,
+    until: date,
+    config_manager: Optional[ConfigManager] = None,
+) -> None:
+    """Render the Leadspedia Overview sub-tab."""
+    
+    st.markdown("### Leadspedia Overview")
+    st.caption("Summary of lead performance from Leadspedia.")
+    
+    # Check for configuration
+    campaign_config = config_manager.load() if config_manager else None
+    has_affiliate = bool(cfg.leadspedia_affiliate_id) or (campaign_config and campaign_config.affiliate_id)
+    
+    if not has_affiliate:
+        st.warning(
+            "No affiliate ID configured. Go to the **Configuration** tab to set up your "
+            "Leadspedia affiliate ID."
+        )
+        return
+    
+    # Refresh button
+    if st.button("Refresh Leadspedia Data", key="refresh_lp_overview"):
+        try:
+            affiliate_id = cfg.leadspedia_affiliate_id or (campaign_config.affiliate_id if campaign_config else None)
+            if affiliate_id:
+                query = LeadQuery(
+                    since=since,
+                    until=until,
+                    affiliate_id=affiliate_id,
+                )
+                rows = list(fetch_sold_leads(lp_client, query))
+                # from_sold_endpoint=True because getSold.do returns sold leads by definition
+                dispositions = parse_leads_to_dispositions(rows, from_sold_endpoint=True)
+                st.session_state["lp_dispositions"] = dispositions
+                st.session_state["lp_sold_rows"] = rows
+        except Exception as e:
+            st.error(f"Error fetching Leadspedia data: {e}")
+            return
+    
+    dispositions = st.session_state.get("lp_dispositions", [])
+    
+    if not dispositions:
+        st.info("Click 'Refresh Leadspedia Data' to load lead data.")
+        return
+    
+    # Calculate summary stats
+    total_leads = len(dispositions)
+    sold_leads = sum(1 for d in dispositions if d.is_sold)
+    total_revenue = sum(float(d.revenue) for d in dispositions if d.is_sold)
+    avg_price = total_revenue / sold_leads if sold_leads > 0 else 0
+    sell_rate = (sold_leads / total_leads * 100) if total_leads > 0 else 0
+    
+    # Display KPI cards
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("Total Leads", f"{total_leads:,}")
+    with col2:
+        st.metric("Sold Leads", f"{sold_leads:,}")
+    with col3:
+        st.metric("Total Revenue", f"${total_revenue:,.2f}")
+    with col4:
+        st.metric("Avg Price", f"${avg_price:,.2f}")
+    with col5:
+        st.metric("Sell Rate", f"{sell_rate:.1f}%")
+
+
+def _render_leadspedia_buyers(
+    *,
+    lp_client: LeadspediaClient,
+    cache: SqliteCache,
+    cfg: AppConfig,
+    since: date,
+    until: date,
+    config_manager: Optional[ConfigManager] = None,
+) -> None:
+    """Render the Leadspedia Buyers sub-tab."""
+    
+    st.markdown("### Buyer Performance")
+    st.caption("Performance breakdown by buyer/advertiser.")
+    
+    # Get dispositions from session state (populated by overview tab)
+    dispositions = st.session_state.get("lp_dispositions", [])
+    
+    if not dispositions:
+        st.info("Load data from the **Overview** tab first.")
+        return
+    
+    # Aggregate by buyer
+    buyer_performances = aggregate_by_buyer(dispositions)
+    
+    if not buyer_performances:
+        st.info("No sold leads found in the selected date range.")
+        return
+    
+    # Display buyer table
+    buyer_df = buyer_performance_to_dataframe(buyer_performances)
+    st.dataframe(buyer_df, use_container_width=True)
+    
+    # Download button
+    st.download_button(
+        label="Download Buyer Data CSV",
+        data=buyer_df.to_csv(index=False).encode("utf-8"),
+        file_name="leadspedia_buyer_performance.csv",
+        mime="text/csv",
+        key="download_buyer_csv",
+    )
+
+
+def _render_leadspedia_contracts(
+    *,
+    lp_client: LeadspediaClient,
+    cache: SqliteCache,
+) -> None:
+    """Render the Leadspedia Contracts sub-tab."""
+    
+    st.markdown("### Lead Distribution Contracts")
+    st.caption("Active contracts and their configuration.")
+    
+    if st.button("Refresh Contracts", key="refresh_contracts"):
+        contracts = fetch_contracts_cached(lp_client, cache, ttl_seconds=60)
+        st.session_state["lp_contracts"] = contracts
+    
+    contracts = st.session_state.get("lp_contracts", [])
+    
+    if not contracts:
+        st.info("Click 'Refresh Contracts' to load contract data.")
+        return
+    
+    # Build contract table
+    contract_data = []
+    for c in contracts:
+        contract_data.append({
+            "Contract": c.name,
+            "Advertiser": c.advertiser_name,
+            "Status": c.status.title(),
+            "Price": f"${float(c.price):,.2f}",
+            "Daily Cap": c.daily_cap if c.daily_cap else "No cap",
+            "Leads Today": c.leads_today if c.leads_today else 0,
+            "Vertical": c.vertical_name or "N/A",
+        })
+    
+    df = pd.DataFrame(contract_data)
+    
+    # Filter options
+    status_filter = st.selectbox(
+        "Filter by Status",
+        options=["All", "Active", "Paused", "Inactive"],
+        key="contract_status_filter",
+    )
+    
+    if status_filter != "All":
+        df = df[df["Status"].str.lower() == status_filter.lower()]
+    
+    st.dataframe(df, use_container_width=True)
+
+
+def _render_leadspedia_advertisers(
+    *,
+    lp_client: LeadspediaClient,
+    cache: SqliteCache,
+) -> None:
+    """Render the Leadspedia Advertisers sub-tab."""
+    
+    st.markdown("### Advertiser Directory")
+    st.caption("All advertisers (buyers) in your Leadspedia account.")
+    
+    if st.button("Refresh Advertisers", key="refresh_advertisers"):
+        advertisers = fetch_advertisers_cached(lp_client, cache, ttl_seconds=60)
+        st.session_state["lp_advertisers"] = advertisers
+    
+    advertisers = st.session_state.get("lp_advertisers", [])
+    
+    if not advertisers:
+        st.info("Click 'Refresh Advertisers' to load advertiser data.")
+        return
+    
+    # Build advertiser table
+    advertiser_data = []
+    for a in advertisers:
+        advertiser_data.append({
+            "ID": a.id,
+            "Name": a.name,
+            "Status": a.status.title(),
+            "Company": a.company or "N/A",
+            "Email": a.email or "N/A",
+        })
+    
+    df = pd.DataFrame(advertiser_data)
+    
+    # Filter options
+    status_filter = st.selectbox(
+        "Filter by Status",
+        options=["All", "Active", "Paused", "Inactive"],
+        key="advertiser_status_filter",
+    )
+    
+    if status_filter != "All":
+        df = df[df["Status"].str.lower() == status_filter.lower()]
+    
+    st.dataframe(df, use_container_width=True)
+
+
+def _render_combined_roi(
+    *,
+    client: MetaGraphClient,
+    lp_client: LeadspediaClient,
+    cache: SqliteCache,
+    cfg: AppConfig,
+    since: date,
+    until: date,
+    selected_campaign_ids: list[str],
+    selected_adset_ids: list[str],
+    selected_ad_ids: list[str],
+    min_spend: float,
+    alert_monitor: Optional[AlertMonitor] = None,
+    config_manager: Optional[ConfigManager] = None,
+) -> None:
+    """Render the Combined ROI Overview sub-tab."""
+    
+    st.markdown("### ROI Overview")
+    st.caption("Combined Meta Ads spend data with Leadspedia revenue data for profitability analysis.")
+    
+    # Check for configuration
+    campaign_config = config_manager.load() if config_manager else None
+    has_affiliate = bool(cfg.leadspedia_affiliate_id) or (campaign_config and campaign_config.affiliate_id)
+    has_mappings = bool(cfg.leadspedia_campaign_map) or (campaign_config and (campaign_config.mappings or campaign_config.default_vertical_id))
+    
+    if not has_affiliate and not has_mappings:
+        st.warning(
+            "No Leadspedia configuration found. Go to the **Leadspedia > Configuration** tab to set up your "
+            "affiliate ID and campaign-to-vertical mappings."
+        )
+        return
+    
+    # Refresh button
+    if st.button("Refresh Combined Data", key="refresh_combined_roi"):
+        # First get Meta data
+        q = InsightsQuery(
+            ad_account_id=cfg.meta_ad_account_id,
+            since=since,
+            until=until,
+            level="ad",
+            breakdowns=[],
+            campaign_ids=selected_campaign_ids,
+            adset_ids=selected_adset_ids,
+            ad_ids=selected_ad_ids,
+        )
+        meta_df = fetch_insights_frame_cached(
+            client, cache, q,
+            lead_action_types=cfg.meta_lead_action_types,
+            ttl_seconds=cfg.cache_ttl_seconds,
+        )
+        
+        # Fetch and match with Leadspedia data
+        try:
+            combined_df = fetch_and_match_data_cached(
+                meta_df=meta_df,
+                lp_client=lp_client,
+                cache=cache,
+                cfg=cfg,
                 since=since,
                 until=until,
-                level="ad",
-                breakdowns=[],
-                campaign_ids=selected_campaign_ids,
-                adset_ids=selected_adset_ids,
-                ad_ids=selected_ad_ids,
+                ttl_seconds=cfg.cache_ttl_seconds,
+                config_manager=config_manager,
             )
-            if st.button("Show action types seen in this range"):
-                try:
-                    summary = fetch_action_type_summary_cached(client, cache, q, ttl_seconds=cfg.cache_ttl_seconds)
-                    st.dataframe(summary, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Failed to load action type summary: {e}")
+            st.session_state["df_revenue"] = combined_df
+            st.session_state["meta_df_for_revenue"] = meta_df
+            
+            # Check for alerts if monitor is available
+            if alert_monitor is not None:
+                alerts = alert_monitor.check_alerts(combined_df)
+                if alerts:
+                    alert_monitor.send_alerts(alerts)
+                    st.toast(f"{len(alerts)} alert(s) triggered", icon="⚠️")
+                    
+        except LeadspediaApiError as e:
+            st.error(f"Leadspedia API error: {e}")
+            return
+        except Exception as e:
+            st.error(f"Error fetching revenue data: {e}")
+            return
+    
+    # Get cached data
+    combined_df = st.session_state.get("df_revenue", pd.DataFrame())
+    
+    if combined_df.empty:
+        st.info("Click 'Refresh Combined Data' to load combined metrics.")
+        return
+    
+    # Calculate overall KPIs
+    thresholds = cfg.alert_thresholds_default
+    kpis = calculate_revenue_kpis(
+        combined_df,
+        target_roi=thresholds.min_roi,
+        target_sell_rate=thresholds.min_sell_rate,
+    )
+    
+    # Display KPI summary cards
+    _render_kpi_cards(kpis)
+    
+    st.divider()
+    
+    # Detailed data table
+    st.markdown("#### Detailed Performance Data")
+    
+    # Column selection for display
+    display_cols = [
+        "campaign_name", "adset_name", "ad_name",
+        "spend", "meta_leads", "revenue", "profit", "roi",
+        "sell_through_rate", "avg_sale_price", "cpl", "break_even_cpl",
+    ]
+    available_cols = [c for c in display_cols if c in combined_df.columns]
+    
+    # Format numeric columns for display
+    display_df = combined_df[available_cols].copy()
+    
+    st.dataframe(
+        display_df.sort_values(by=["profit"], ascending=False),
+        use_container_width=True,
+    )
+    
+    # Download button
+    st.download_button(
+        label="Download Combined Data CSV",
+        data=dataframe_to_csv_bytes(combined_df),
+        file_name="meta_leadspedia_combined_report.csv",
+        mime="text/csv",
+        key="download_combined_csv",
+    )
+    
+    # Performance Summary
+    st.divider()
+    st.markdown("#### Performance Summary")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Financial Health**")
+        if kpis.is_profitable:
+            st.success(f"Overall Profitable: ${kpis.gross_profit:,.2f} profit")
+        else:
+            st.error(f"Overall Loss: ${kpis.gross_profit:,.2f}")
+        
+        st.metric(
+            "ROI vs Target",
+            f"{kpis.roi_pct:.1f}%",
+            delta=f"{kpis.margin_vs_target:.1f}%",
+            delta_color="normal" if kpis.margin_vs_target >= 0 else "inverse",
+        )
+        
+        st.metric(
+            "ROAS",
+            f"{kpis.roas:.2f}x",
+            help="Return on Ad Spend (Revenue / Spend)",
+        )
+    
+    with col2:
+        st.markdown("**Lead Performance**")
+        st.metric(
+            "Sell-Through Rate",
+            f"{kpis.sell_through_rate:.1f}%",
+            delta=f"{kpis.sell_rate_vs_target:.1f}%",
+            delta_color="normal" if kpis.sell_rate_vs_target >= 0 else "inverse",
+        )
+        
+        st.metric(
+            "Unsold Leads",
+            f"{kpis.unsold_leads:,}",
+            delta_color="inverse" if kpis.unsold_leads > 0 else "off",
+        )
+        
+        st.metric(
+            "Break-Even CPL",
+            f"${kpis.break_even_cpl:.2f}",
+            help="Maximum CPL to break even at current sell rate and price",
+        )
 
-            if df is not None and not df.empty and "spend" in df.columns and "leads" in df.columns:
-                spend_sum = float(pd.to_numeric(df["spend"], errors="coerce").fillna(0).sum())
-                leads_sum = int(pd.to_numeric(df["leads"], errors="coerce").fillna(0).sum())
-                cpl = (spend_sum / leads_sum) if leads_sum > 0 else None
 
-    with tab_age_gender:
-        if st.button("Refresh age/gender"):
-            st.session_state["df_age_gender"] = run_query(["age", "gender"])
-        df = st.session_state.get("df_age_gender", pd.DataFrame())
-        _render_results(df, min_spend=min_spend, min_leads=min_leads, cfg=cfg, tab_key="age_gender")
-
-    with tab_placement:
-        if st.button("Refresh placement"):
-            st.session_state["df_placement"] = run_query(["publisher_platform", "platform_position"])
-        df = st.session_state.get("df_placement", pd.DataFrame())
-        _render_results(df, min_spend=min_spend, min_leads=min_leads, cfg=cfg, tab_key="placement")
-
-    with tab_device:
-        if st.button("Refresh device"):
-            st.session_state["df_device"] = run_query(["device_platform"])
-        df = st.session_state.get("df_device", pd.DataFrame())
-        _render_results(df, min_spend=min_spend, min_leads=min_leads, cfg=cfg, tab_key="device")
+def _render_combined_problems(
+    *,
+    cfg: AppConfig,
+    min_spend: float,
+) -> None:
+    """Render the Combined Problem Areas sub-tab."""
+    
+    st.markdown("### Problem Areas")
+    st.caption("Ads/campaigns that need attention based on configured thresholds.")
+    
+    combined_df = st.session_state.get("df_revenue", pd.DataFrame())
+    
+    if combined_df.empty:
+        st.info("Load combined data from the **ROI Overview** tab first.")
+        return
+    
+    thresholds = cfg.alert_thresholds_default
+    problems_df = identify_problem_areas(
+        combined_df,
+        min_spend=min_spend,
+        target_roi=thresholds.min_roi,
+        target_sell_rate=thresholds.min_sell_rate,
+    )
+    
+    if problems_df.empty:
+        st.success("No problem areas identified! All metrics are within targets.")
+    else:
+        # Show critical issues first
+        critical = problems_df[problems_df["severity"] == "critical"]
+        if not critical.empty:
+            st.error(f"**{len(critical)} Critical Issues Found**")
+            st.dataframe(critical, use_container_width=True)
+        
+        # Show warnings
+        warnings = problems_df[problems_df["severity"] == "warning"]
+        if not warnings.empty:
+            st.warning(f"**{len(warnings)} Warnings**")
+            st.dataframe(warnings, use_container_width=True)
 
 
 def _render_alerts_tab(
@@ -407,11 +956,11 @@ def _render_alerts_tab(
         return
     
     # Display alerts
-    for alert in filtered_alerts:
-        _render_alert_card(alert, alert_monitor)
+    for idx, alert in enumerate(filtered_alerts):
+        _render_alert_card(alert, alert_monitor, idx)
 
 
-def _render_alert_card(alert: Alert, alert_monitor: AlertMonitor) -> None:
+def _render_alert_card(alert: Alert, alert_monitor: AlertMonitor, idx: int = 0) -> None:
     """Render a single alert card."""
     
     # Determine styling based on severity
@@ -452,7 +1001,7 @@ def _render_alert_card(alert: Alert, alert_monitor: AlertMonitor) -> None:
         
         with col3:
             if not alert.acknowledged:
-                if st.button("Ack", key=f"ack_{alert.id}"):
+                if st.button("Ack", key=f"ack_{alert.id}_{idx}"):
                     alert_monitor.acknowledge_alert(alert.id)
                     st.rerun()
         
@@ -635,225 +1184,6 @@ def _render_config_tab(
     # Show raw config for debugging
     with st.expander("Raw Configuration (Debug)", expanded=False):
         st.json(campaign_config.to_dict())
-
-
-def _render_revenue_tab(
-    *,
-    client: MetaGraphClient,
-    lp_client: LeadspediaClient,
-    cache: SqliteCache,
-    cfg: AppConfig,
-    since: date,
-    until: date,
-    selected_campaign_ids: list[str],
-    selected_adset_ids: list[str],
-    selected_ad_ids: list[str],
-    min_spend: float,
-    alert_monitor: Optional[AlertMonitor] = None,
-    config_manager: Optional[ConfigManager] = None,
-) -> None:
-    """Render the Revenue & ROI tab with combined Meta + Leadspedia data."""
-    
-    st.markdown("### Revenue & ROI Analysis")
-    st.caption("Combined Meta Ads spend data with Leadspedia revenue data for profitability analysis.")
-    
-    # Check for configuration
-    campaign_config = config_manager.load() if config_manager else None
-    has_affiliate = bool(cfg.leadspedia_affiliate_id) or (campaign_config and campaign_config.affiliate_id)
-    has_mappings = bool(cfg.leadspedia_campaign_map) or (campaign_config and (campaign_config.mappings or campaign_config.default_vertical_id))
-    
-    if not has_affiliate and not has_mappings:
-        st.warning(
-            "No Leadspedia configuration found. Go to the **Configuration** tab to set up your "
-            "affiliate ID and campaign-to-vertical mappings."
-        )
-        return
-    
-    # Refresh button
-    if st.button("Refresh Revenue Data", key="refresh_revenue"):
-        # First get Meta data
-        q = InsightsQuery(
-            ad_account_id=cfg.meta_ad_account_id,
-            since=since,
-            until=until,
-            level="ad",
-            breakdowns=[],
-            campaign_ids=selected_campaign_ids,
-            adset_ids=selected_adset_ids,
-            ad_ids=selected_ad_ids,
-        )
-        meta_df = fetch_insights_frame_cached(
-            client, cache, q,
-            lead_action_types=cfg.meta_lead_action_types,
-            ttl_seconds=cfg.cache_ttl_seconds,
-        )
-        
-        # Add campaign_id to the dataframe if we need to look it up
-        # The InsightsQuery should include campaign_id in the response
-        
-        # Fetch and match with Leadspedia data
-        try:
-            combined_df = fetch_and_match_data_cached(
-                meta_df=meta_df,
-                lp_client=lp_client,
-                cache=cache,
-                cfg=cfg,
-                since=since,
-                until=until,
-                ttl_seconds=cfg.cache_ttl_seconds,
-                config_manager=config_manager,
-            )
-            st.session_state["df_revenue"] = combined_df
-            st.session_state["meta_df_for_revenue"] = meta_df
-            
-            # Check for alerts if monitor is available
-            if alert_monitor is not None:
-                alerts = alert_monitor.check_alerts(combined_df)
-                if alerts:
-                    alert_monitor.send_alerts(alerts)
-                    st.toast(f"{len(alerts)} alert(s) triggered", icon="⚠️")
-                    
-        except LeadspediaApiError as e:
-            st.error(f"Leadspedia API error: {e}")
-            return
-        except Exception as e:
-            st.error(f"Error fetching revenue data: {e}")
-            return
-    
-    # Get cached data
-    combined_df = st.session_state.get("df_revenue", pd.DataFrame())
-    
-    if combined_df.empty:
-        st.info("Click 'Refresh Revenue Data' to load combined metrics.")
-        return
-    
-    # Calculate overall KPIs
-    thresholds = cfg.alert_thresholds_default
-    kpis = calculate_revenue_kpis(
-        combined_df,
-        target_roi=thresholds.min_roi,
-        target_sell_rate=thresholds.min_sell_rate,
-    )
-    
-    # Display KPI summary cards
-    _render_kpi_cards(kpis)
-    
-    st.divider()
-    
-    # Tabs for different views within revenue
-    rev_tab1, rev_tab2, rev_tab3 = st.tabs(["Detailed Data", "Problem Areas", "Performance Summary"])
-    
-    with rev_tab1:
-        st.markdown("#### Combined Performance Data")
-        
-        # Column selection for display
-        display_cols = [
-            "campaign_name", "adset_name", "ad_name",
-            "spend", "meta_leads", "revenue", "profit", "roi",
-            "sell_through_rate", "avg_sale_price", "cpl", "break_even_cpl",
-        ]
-        available_cols = [c for c in display_cols if c in combined_df.columns]
-        
-        # Format numeric columns for display
-        display_df = combined_df[available_cols].copy()
-        
-        st.dataframe(
-            display_df.sort_values(by=["profit"], ascending=False),
-            use_container_width=True,
-        )
-        
-        # Download button
-        st.download_button(
-            label="Download Combined Data CSV",
-            data=dataframe_to_csv_bytes(combined_df),
-            file_name="meta_leadspedia_combined_report.csv",
-            mime="text/csv",
-            key="download_revenue_csv",
-        )
-    
-    with rev_tab2:
-        st.markdown("#### Problem Areas")
-        st.caption("Ads/campaigns that need attention based on configured thresholds.")
-        
-        problems_df = identify_problem_areas(
-            combined_df,
-            min_spend=min_spend,
-            target_roi=thresholds.min_roi,
-            target_sell_rate=thresholds.min_sell_rate,
-        )
-        
-        if problems_df.empty:
-            st.success("No problem areas identified! All metrics are within targets.")
-        else:
-            # Show critical issues first
-            critical = problems_df[problems_df["severity"] == "critical"]
-            if not critical.empty:
-                st.error(f"**{len(critical)} Critical Issues Found**")
-                st.dataframe(critical, use_container_width=True)
-            
-            # Show warnings
-            warnings = problems_df[problems_df["severity"] == "warning"]
-            if not warnings.empty:
-                st.warning(f"**{len(warnings)} Warnings**")
-                st.dataframe(warnings, use_container_width=True)
-    
-    with rev_tab3:
-        st.markdown("#### Performance Summary")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**Financial Health**")
-            if kpis.is_profitable:
-                st.success(f"Overall Profitable: ${kpis.gross_profit:,.2f} profit")
-            else:
-                st.error(f"Overall Loss: ${kpis.gross_profit:,.2f}")
-            
-            st.metric(
-                "ROI vs Target",
-                f"{kpis.roi_pct:.1f}%",
-                delta=f"{kpis.margin_vs_target:.1f}%",
-                delta_color="normal" if kpis.margin_vs_target >= 0 else "inverse",
-            )
-            
-            st.metric(
-                "ROAS",
-                f"{kpis.roas:.2f}x",
-                help="Return on Ad Spend (Revenue / Spend)",
-            )
-        
-        with col2:
-            st.markdown("**Lead Performance**")
-            st.metric(
-                "Sell-Through Rate",
-                f"{kpis.sell_through_rate:.1f}%",
-                delta=f"{kpis.sell_rate_vs_target:.1f}%",
-                delta_color="normal" if kpis.sell_rate_vs_target >= 0 else "inverse",
-            )
-            
-            st.metric(
-                "Unsold Leads",
-                f"{kpis.unsold_leads:,}",
-                delta_color="inverse" if kpis.unsold_leads > 0 else "off",
-            )
-            
-            st.metric(
-                "Break-Even CPL",
-                f"${kpis.break_even_cpl:.2f}",
-                help="Maximum CPL to break even at current sell rate and price",
-            )
-        
-        # Show efficiency metrics
-        st.markdown("**Efficiency Metrics**")
-        eff_col1, eff_col2, eff_col3, eff_col4 = st.columns(4)
-        with eff_col1:
-            st.metric("CPL (Actual)", f"${kpis.cpl:.2f}")
-        with eff_col2:
-            st.metric("Avg Sale Price", f"${kpis.avg_sale_price:.2f}")
-        with eff_col3:
-            st.metric("Profit/Lead", f"${kpis.ppl:.2f}")
-        with eff_col4:
-            st.metric("EPC", f"${kpis.epc:.4f}")
 
 
 def _render_kpi_cards(kpis: RevenueKPIs) -> None:
