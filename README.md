@@ -27,6 +27,30 @@ A local Streamlit dashboard for Meta (Facebook) Lead Ads reporting with Leadsped
 
 ---
 
+## Screenshots
+
+### CPL Analysis
+Creative performance ranking with statistical confidence indicators. Ads are categorized as Scale (green), Maintain (yellow), Kill (red), or Needs Data based on CPL performance and data volume.
+
+![CPL Analysis](dashboard_examples/CPL%20Analysis.png)
+
+### Revenue & ROI Analysis
+Combined Meta Ads spend with Leadspedia revenue data for profitability analysis. View profit/loss, ROI percentage, sell-through rates, and break-even CPL at the campaign, adset, and ad level.
+
+![Revenue & ROI](dashboard_examples/Revenue%20%26%20ROI.png)
+
+### Statistical Significance
+Data requirements visualization showing how many more leads (and spend) each ad needs to reach 95% statistical confidence. Helps prevent premature optimization decisions.
+
+![Statistical Significance](dashboard_examples/Statistical%20Significance.png)
+
+### LLM Analysis Export
+Export your performance data in a markdown format optimized for AI assistants like Claude or ChatGPT. Filter by minimum spend and select top/bottom performers for analysis.
+
+![LLM Analysis Export](dashboard_examples/LLM%20Analysis.png)
+
+---
+
 ## Quick Start
 
 ### 1. Clone and Setup
