@@ -101,7 +101,6 @@ def fetch_verticals(client: LeadspediaClient) -> List[LeadspediaVertical]:
         if isinstance(data, list):
             verticals = [LeadspediaVertical.from_api_response(v) for v in data if isinstance(v, dict)]
             return verticals
-        else:
             
     except Exception as e:
         import traceback
@@ -144,8 +143,8 @@ def fetch_verticals_cached(
         try:
             data = json.loads(cached)
             return [LeadspediaVertical(id=v["id"], name=v["name"], status=v["status"]) for v in data]
-        except (json.JSONDecodeError, KeyError) as e:
-    else:
+        except (json.JSONDecodeError, KeyError):
+            pass  # Fall through to fetch fresh data
     
     verticals = fetch_verticals(client)
     

@@ -418,14 +418,12 @@ def fetch_and_match_data_cached(
         try:
             rows = list(fetch_leads(lp_client, query))
             if rows:
-            all_dispositions = parse_leads_to_dispositions(rows)
-            if all_dispositions:
-                d = all_dispositions[0]
-                sold_count = sum(1 for d in all_dispositions if d.is_sold)
-                total_revenue = sum(float(d.revenue) for d in all_dispositions)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
+                all_dispositions = parse_leads_to_dispositions(rows)
+                if all_dispositions:
+                    sold_count = sum(1 for d in all_dispositions if d.is_sold)
+                    total_revenue = sum(float(d.revenue) for d in all_dispositions)
+        except Exception:
+            pass  # Will try sold leads endpoint as fallback
         
         # Also try fetching sold leads specifically (may have more revenue data)
         try:
