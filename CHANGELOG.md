@@ -11,6 +11,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.3] - 2025-12-19
+
+### Added
+- **LP Campaign Column in ROI Overview**: 
+  - Added Leadspedia Campaign name to Detailed Performance Data table
+  - Column appears after "Ad" for easy cross-reference
+- **Leadspedia Tab Overview Sections**:
+  - **Buyers Tab**: Total buyers, leads sold, revenue, avg price, top buyer KPIs
+  - **Contracts Tab**: Total/Active/Paused/Inactive counts, daily cap, leads today, avg price, unique advertisers
+  - **Advertisers Tab**: Total/Active/Paused/Inactive counts, with email/company stats, data completeness %
+- **Message Token Extraction**: 
+  - Uses `lp_post_response` field (buyer rejection message) as primary source
+  - Falls back to `disposition`, `returnReason` for returned leads
+- **Trashed Lead Status**:
+  - New "🗑️ Trashed" status for leads rejected before delivery (e.g., TrustedForm validation)
+  - New "🧹 Scrubbed" status for scrubbed leads
+
+### Changed
+- Increased API limits for Advertisers and Contracts from default to 1000
+- `MatchedLeadData` now includes `lp_campaign_id` and `lp_campaign_name` fields
+- ROI table columns renamed for clarity (FB Campaign, Ad Set, Ad, LP Campaign, etc.)
+- Lead data now fetched via `getAll.do` to include all lead statuses (sold, trashed, unsold)
+
+### Fixed
+- Message Token now correctly shows buyer rejection reasons from `lp_post_response` field
+- Trashed/unsold leads now visible in Lead Log (previously only showed delivered leads)
+
+---
+
 ## [1.0.2] - 2025-12-19
 
 ### Added

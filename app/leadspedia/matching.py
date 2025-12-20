@@ -47,6 +47,8 @@ class MatchedLeadData:
     cpl: float  # Meta CPL
     
     # Leadspedia data (aggregated for this ad/adset/campaign)
+    lp_campaign_id: str  # Leadspedia campaign ID
+    lp_campaign_name: str  # Leadspedia campaign name
     lp_total_leads: int
     lp_sold_leads: int
     lp_rejected_leads: int
@@ -239,6 +241,10 @@ def _create_matched_data_proportional(
     epl = lp_revenue / meta_leads if meta_leads > 0 else 0.0
     break_even_cpl = avg_sale_price * (sell_through_rate / 100) if avg_sale_price > 0 else 0.0
     
+    # Get LP campaign info from stats
+    lp_campaign_name = str(lp_stats.get("campaign_name", ""))
+    lp_campaign_id = str(lp_stats.get("campaign_id", ""))
+    
     return MatchedLeadData(
         campaign_id=campaign_id,
         campaign_name=campaign_name,
@@ -251,6 +257,8 @@ def _create_matched_data_proportional(
         impressions=impressions,
         clicks=clicks,
         cpl=cpl,
+        lp_campaign_id=lp_campaign_id,
+        lp_campaign_name=lp_campaign_name,
         lp_total_leads=lp_total,
         lp_sold_leads=lp_sold,
         lp_rejected_leads=lp_rejected,
@@ -281,6 +289,8 @@ def _aggregate_lp_dispositions(
             "pending": 0,
             "revenue": 0.0,
             "payout": 0.0,
+            "campaign_name": "",
+            "campaign_id": "",
         }
     
     total = len(dispositions)
@@ -290,6 +300,14 @@ def _aggregate_lp_dispositions(
     revenue = float(sum(d.revenue for d in dispositions))
     payout = float(sum(d.payout for d in dispositions))
     
+    # Get most common LP campaign name from dispositions
+    campaign_names = [d.campaign for d in dispositions if d.campaign]
+    lp_campaign_name = max(set(campaign_names), key=campaign_names.count) if campaign_names else ""
+    
+    # Try to extract campaign ID from raw data
+    campaign_ids = [str(d.raw_data.get("campaignID", "")) for d in dispositions if d.raw_data.get("campaignID")]
+    lp_campaign_id = max(set(campaign_ids), key=campaign_ids.count) if campaign_ids else ""
+    
     return {
         "total": total,
         "sold": sold,
@@ -297,6 +315,8 @@ def _aggregate_lp_dispositions(
         "pending": pending,
         "revenue": revenue,
         "payout": payout,
+        "campaign_name": lp_campaign_name,
+        "campaign_id": lp_campaign_id,
     }
 
 
@@ -316,6 +336,8 @@ def matched_data_to_dataframe(
             "adset_name": m.adset_name,
             "ad_id": m.ad_id,
             "ad_name": m.ad_name,
+            "lp_campaign_id": m.lp_campaign_id,
+            "lp_campaign_name": m.lp_campaign_name,
             "spend": m.spend,
             "meta_leads": m.meta_leads,
             "impressions": m.impressions,

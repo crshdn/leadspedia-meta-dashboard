@@ -114,18 +114,19 @@ class LeadspediaContract:
         )
 
 
-def fetch_advertisers(client: LeadspediaClient) -> List[LeadspediaAdvertiser]:
+def fetch_advertisers(client: LeadspediaClient, limit: int = 1000) -> List[LeadspediaAdvertiser]:
     """
     Fetch all advertisers (buyers) from Leadspedia.
     
     Args:
         client: Leadspedia API client
+        limit: Maximum number of advertisers to fetch (default 1000)
         
     Returns:
         List of LeadspediaAdvertiser objects
     """
     try:
-        response = client.get("advertisers/getAll.do")
+        response = client.get("advertisers/getAll.do", params={"limit": limit})
         
         # API returns: { "response": { "data": [...] } }
         inner_response = response.get("response", {})
@@ -141,18 +142,19 @@ def fetch_advertisers(client: LeadspediaClient) -> List[LeadspediaAdvertiser]:
     return []
 
 
-def fetch_contracts(client: LeadspediaClient) -> List[LeadspediaContract]:
+def fetch_contracts(client: LeadspediaClient, limit: int = 1000) -> List[LeadspediaContract]:
     """
     Fetch all lead distribution contracts from Leadspedia.
     
     Args:
         client: Leadspedia API client
+        limit: Maximum number of contracts to fetch (default 1000)
         
     Returns:
         List of LeadspediaContract objects
     """
     try:
-        response = client.get("leadDistributionContracts/getAll.do")
+        response = client.get("leadDistributionContracts/getAll.do", params={"limit": limit})
         
         # API returns: { "response": { "data": [...] } }
         inner_response = response.get("response", {})
@@ -470,6 +472,84 @@ def fetch_sold_leads(
     yield from iter_data_from_pages(pages)
 
 
+@dataclass
+class ReturnQuery:
+    """Query parameters for fetching returned/rejected leads."""
+    
+    since: date
+    until: Optional[date] = None
+    campaign_id: Optional[int] = None
+    affiliate_id: Optional[int] = None
+    vertical_id: Optional[int] = None
+    advertiser_id: Optional[int] = None
+    contract_id: Optional[int] = None
+    status: Optional[str] = None  # Pending, Approved, Rejected, Attempted Contact, Researching
+    
+    def to_params(self) -> Dict[str, Any]:
+        """Convert to API query parameters."""
+        params: Dict[str, Any] = {
+            "fromDate": self.since.strftime("%Y-%m-%d"),
+        }
+        if self.until:
+            params["toDate"] = self.until.strftime("%Y-%m-%d")
+        if self.campaign_id:
+            params["campaignID"] = self.campaign_id
+        if self.affiliate_id:
+            params["affiliateID"] = self.affiliate_id
+        if self.vertical_id:
+            params["verticalID"] = self.vertical_id
+        if self.advertiser_id:
+            params["advertiserID"] = self.advertiser_id
+        if self.contract_id:
+            params["contractID"] = self.contract_id
+        if self.status:
+            params["status"] = self.status
+        return params
+
+
+def fetch_returns(
+    client: LeadspediaClient,
+    query: ReturnQuery,
+) -> Iterator[Dict[str, Any]]:
+    """
+    Fetch returned/rejected leads from Leadspedia API.
+    
+    This endpoint returns leads that have been returned by buyers,
+    with status options: Pending, Approved, Rejected, Attempted Contact, Researching.
+    
+    Args:
+        client: Leadspedia API client
+        query: Query parameters
+        
+    Yields:
+        Return records as dictionaries
+    """
+    pages = client.get_paged("leads/getReturns.do", params=query.to_params())
+    yield from iter_data_from_pages(pages)
+
+
+def fetch_delivered_leads(
+    client: LeadspediaClient,
+    query: LeadQuery,
+) -> Iterator[Dict[str, Any]]:
+    """
+    Fetch delivered leads from Leadspedia API.
+    
+    This endpoint returns leads that were delivered to buyers,
+    including both sold and unsold leads. Useful for tracking
+    leads that were posted but not accepted.
+    
+    Args:
+        client: Leadspedia API client
+        query: Query parameters (same as LeadQuery)
+        
+    Yields:
+        Delivered lead records as dictionaries
+    """
+    pages = client.get_paged("leads/getDelivered.do", params=query.to_params())
+    yield from iter_data_from_pages(pages)
+
+
 def fetch_affiliate_clicks(
     client: LeadspediaClient,
     query: AffiliateClickQuery,
@@ -516,37 +596,60 @@ class LeadDisposition:
 
     lead_id: str
     external_id: Optional[str]  # Meta Lead ID or other external reference
-    status: str  # 'sold', 'rejected', 'pending', 'returned'
+    status: str  # 'sold', 'rejected', 'pending', 'returned', 'unsold'
     revenue: Decimal
     payout: Decimal
     cost: Decimal
     buyer_name: Optional[str]
+    contract_name: Optional[str]  # Contract/offer name
     created_at: Optional[datetime]
     sold_at: Optional[datetime]
+    delivered_at: Optional[datetime]  # When delivered to buyer
     vertical: Optional[str]
-    campaign: Optional[str]
+    campaign: Optional[str]  # LP campaign name
     affiliate_id: Optional[str]
     sub_id: Optional[str]  # Often contains tracking info
+    return_reason: Optional[str]  # Buyer rejection/return reason (Message Token)
     raw_data: Dict[str, Any]
 
     @classmethod
-    def from_api_response(cls, data: Dict[str, Any], from_sold_endpoint: bool = False) -> "LeadDisposition":
-        """Parse a lead disposition from API response data."""
+    def from_api_response(
+        cls, 
+        data: Dict[str, Any], 
+        from_sold_endpoint: bool = False,
+        from_delivered_endpoint: bool = False,
+        from_all_endpoint: bool = False,
+    ) -> "LeadDisposition":
+        """Parse a lead disposition from API response data.
+        
+        Args:
+            data: Raw API response data
+            from_sold_endpoint: If True, leads are from getSold.do (all sold)
+            from_delivered_endpoint: If True, leads are from getDelivered.do 
+                                    (check soldID to determine if sold)
+            from_all_endpoint: If True, leads are from getAll.do
+                              (check sold/trash/scrubbed fields)
+        """
         # Leadspedia field mapping:
         # - sold: "Yes" or "No" (status indicator)
+        # - trash: "Yes" or "No" (lead was trashed/rejected)
+        # - scrubbed: "Yes" or "No" (lead was scrubbed)
+        # - soldID: If present and non-empty, lead was sold
+        # - lp_post_response: Buyer rejection message (Message Token)
+        # - disposition: Also contains rejection reason
         # - CPL: cost per lead (what affiliate paid)
         # - RPL: revenue per lead (from getAll.do)
         # - price: sale price (from getSold.do)
-        # - createdOn: creation datetime
-        # - dateSold: sold datetime (from getSold.do)
-        # - buyerName: buyer name (from getSold.do)
-        # - returned: "Yes" or "No" (return status from getSold.do)
+        # - returned: "Yes" or "No" (return status)
+        # - returnReason: Buyer rejection/return reason
         
         # Determine status from Leadspedia fields
-        # If from_sold_endpoint=True, these leads are sold by definition (from getSold.do)
         sold_field = str(data.get("sold", "")).lower()
         returned_field = str(data.get("returned", "")).lower()
+        trash_field = str(data.get("trash", "")).lower()
+        scrubbed_field = str(data.get("scrubbed", "")).lower()
         status_field = data.get("status") or data.get("disposition")
+        sold_id = data.get("soldID") or data.get("sold_id")
         
         if from_sold_endpoint:
             # Leads from getSold.do are sold by definition (unless returned)
@@ -554,6 +657,26 @@ class LeadDisposition:
                 status = "returned"
             else:
                 status = "sold"
+        elif from_delivered_endpoint:
+            # Leads from getDelivered.do - check soldID to determine if sold
+            if returned_field == "yes":
+                status = "returned"
+            elif sold_id and str(sold_id).strip():
+                status = "sold"
+            else:
+                status = "unsold"  # Delivered but not sold
+        elif from_all_endpoint:
+            # Leads from getAll.do - check sold/trash/scrubbed fields
+            if returned_field == "yes":
+                status = "returned"
+            elif sold_field == "yes":
+                status = "sold"
+            elif trash_field == "yes":
+                status = "trashed"  # Rejected/trashed
+            elif scrubbed_field == "yes":
+                status = "scrubbed"
+            else:
+                status = "unsold"  # Not sold yet
         elif status_field:
             status = str(status_field).lower()
         elif returned_field == "yes":
@@ -587,6 +710,16 @@ class LeadDisposition:
             data.get("PPL")  # Pay per lead
         )
         
+        # Message Token: lp_post_response contains the buyer rejection/response message
+        # This is the primary field for rejection reasons; fallback to returnReason for returned leads
+        message_token = (
+            data.get("lp_post_response") or 
+            data.get("disposition") or
+            data.get("returnReason") or 
+            data.get("return_reason") or 
+            data.get("rejectReason")
+        )
+        
         return cls(
             lead_id=str(data.get("leadID") or data.get("id") or ""),
             external_id=data.get("externalID") or data.get("sub_id") or data.get("subID"),
@@ -594,13 +727,16 @@ class LeadDisposition:
             revenue=revenue,
             payout=payout,
             cost=cost,
-            buyer_name=data.get("buyerName") or data.get("buyer") or data.get("contractName"),
+            buyer_name=data.get("buyerName") or data.get("buyer"),
+            contract_name=data.get("contractName") or data.get("contract"),
             created_at=_parse_datetime(data.get("createdOn") or data.get("createdAt") or data.get("created")),
             sold_at=_parse_datetime(data.get("dateSold") or data.get("soldAt") or data.get("soldDate")),
+            delivered_at=_parse_datetime(data.get("dateDelivered") or data.get("deliveredAt")),
             vertical=data.get("verticalName") or data.get("vertical"),
             campaign=data.get("campaignName") or data.get("campaign"),
             affiliate_id=str(data.get("affiliateID") or data.get("affiliate_id") or ""),
             sub_id=data.get("subID") or data.get("sub_id") or data.get("subId") or data.get("s1"),
+            return_reason=message_token,  # Now uses lp_post_response as primary source
             raw_data=data,
         )
 
@@ -611,8 +747,13 @@ class LeadDisposition:
 
     @property
     def is_rejected(self) -> bool:
-        """Check if this lead was rejected."""
-        return self.status in ("rejected", "declined", "returned")
+        """Check if this lead was rejected/returned/trashed."""
+        return self.status in ("rejected", "declined", "returned", "trashed", "scrubbed")
+
+    @property
+    def is_unsold(self) -> bool:
+        """Check if this lead was not sold (trashed, scrubbed, or pending)."""
+        return self.status in ("unsold", "trashed", "scrubbed", "pending")
 
     @property
     def is_pending(self) -> bool:
@@ -631,10 +772,58 @@ class LeadDisposition:
             return None
         return ((self.revenue - self.payout) / self.revenue) * 100
 
+    # Meta attribution properties - extracted from lp_s* custom fields
+    # Mapping: lp_s2=Ad Name, lp_s3=Ad Set Name, lp_s4=Campaign Name, lp_s5=Platform
+    
+    @property
+    def meta_campaign_name(self) -> str:
+        """Facebook Campaign Name from lp_s4."""
+        return str(self.raw_data.get("lp_s4") or self.raw_data.get("s4") or "")
+    
+    @property
+    def meta_adset_name(self) -> str:
+        """Facebook Ad Set Name from lp_s3."""
+        return str(self.raw_data.get("lp_s3") or self.raw_data.get("s3") or "")
+    
+    @property
+    def meta_ad_name(self) -> str:
+        """Facebook Ad Name from lp_s2."""
+        return str(self.raw_data.get("lp_s2") or self.raw_data.get("s2") or "")
+    
+    @property
+    def meta_platform(self) -> str:
+        """Facebook Platform from lp_s5."""
+        return str(self.raw_data.get("lp_s5") or self.raw_data.get("s5") or "")
+    
+    @property
+    def has_meta_attribution(self) -> bool:
+        """Check if this lead has Meta campaign attribution."""
+        return bool(self.meta_campaign_name)
+    
+    @property
+    def problems(self) -> List[str]:
+        """Return list of problem indicators for this lead."""
+        issues = []
+        if self.is_rejected:
+            issues.append("returned")
+        if self.is_unsold:
+            issues.append("unsold")
+        if self.status == "pending":
+            issues.append("pending_return")
+        if self.revenue > 0 and self.net_revenue < 0:
+            issues.append("negative_margin")
+        if not self.has_meta_attribution:
+            issues.append("no_meta_match")
+        if self.return_reason:
+            issues.append("has_rejection_reason")
+        return issues
+
 
 def parse_leads_to_dispositions(
     rows: Iterable[Dict[str, Any]],
     from_sold_endpoint: bool = False,
+    from_delivered_endpoint: bool = False,
+    from_all_endpoint: bool = False,
 ) -> List[LeadDisposition]:
     """
     Parse raw API lead data into LeadDisposition objects.
@@ -642,6 +831,10 @@ def parse_leads_to_dispositions(
     Args:
         rows: Raw lead data from API
         from_sold_endpoint: If True, all leads are marked as 'sold' (from getSold.do)
+        from_delivered_endpoint: If True, leads are from getDelivered.do
+                                 (check soldID to determine if sold/unsold)
+        from_all_endpoint: If True, leads are from getAll.do
+                          (check sold/trash/scrubbed fields)
         
     Returns:
         List of parsed LeadDisposition objects
@@ -649,7 +842,12 @@ def parse_leads_to_dispositions(
     dispositions = []
     for row in rows:
         try:
-            disposition = LeadDisposition.from_api_response(row, from_sold_endpoint=from_sold_endpoint)
+            disposition = LeadDisposition.from_api_response(
+                row, 
+                from_sold_endpoint=from_sold_endpoint,
+                from_delivered_endpoint=from_delivered_endpoint,
+                from_all_endpoint=from_all_endpoint,
+            )
             dispositions.append(disposition)
         except Exception:
             # Skip malformed records
@@ -689,6 +887,67 @@ def leads_to_dataframe(dispositions: Sequence[LeadDisposition]) -> pd.DataFrame:
             "campaign": d.campaign,
             "affiliate_id": d.affiliate_id,
             "sub_id": d.sub_id,
+            # Meta attribution fields
+            "meta_campaign": d.meta_campaign_name,
+            "meta_adset": d.meta_adset_name,
+            "meta_ad": d.meta_ad_name,
+            "meta_platform": d.meta_platform,
+            "has_meta_match": d.has_meta_attribution,
+            "problems": ", ".join(d.problems) if d.problems else "",
+        })
+
+    return pd.DataFrame(records)
+
+
+def leads_to_lead_log_dataframe(dispositions: Sequence[LeadDisposition]) -> pd.DataFrame:
+    """
+    Convert lead dispositions to a Lead Log DataFrame for granular reporting.
+    
+    This provides a detailed view suitable for the Lead Log UI, with columns
+    optimized for marketing analysis.
+    
+    Args:
+        dispositions: List of LeadDisposition objects
+        
+    Returns:
+        DataFrame with Lead Log data
+    """
+    if not dispositions:
+        return pd.DataFrame()
+
+    records = []
+    for d in dispositions:
+        # Determine status emoji for quick visual scanning
+        status_icon = {
+            "sold": "✅",
+            "returned": "🔄",
+            "rejected": "❌",
+            "pending": "⏳",
+            "unsold": "⚠️",
+            "trashed": "🗑️",
+            "scrubbed": "🧹",
+        }.get(d.status, "❓")
+        
+        # Calculate margin for display
+        margin_val = float(d.margin) if d.margin is not None else None
+        
+        records.append({
+            "Lead ID": d.lead_id,
+            "Status": f"{status_icon} {d.status.title()}",
+            "Meta Campaign": d.meta_campaign_name or "—",
+            "Ad Set": d.meta_adset_name or "—",
+            "Ad": d.meta_ad_name or "—",
+            "Buyer": d.buyer_name or "—",
+            "Contract": d.contract_name or "—",
+            "Revenue": float(d.revenue),
+            "Payout": float(d.payout),
+            "Margin": float(d.net_revenue),
+            "Margin %": margin_val,
+            "Created": d.created_at.strftime("%m/%d %H:%M") if d.created_at else "—",
+            "Sold": d.sold_at.strftime("%m/%d %H:%M") if d.sold_at else "—",
+            "Problems": ", ".join(d.problems) if d.problems else "—",
+            "Message Token": d.return_reason or "—",
+            "Vertical": d.vertical or "—",
         })
 
     return pd.DataFrame(records)

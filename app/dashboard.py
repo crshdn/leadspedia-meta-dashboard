@@ -540,6 +540,24 @@ def _render_leadspedia_buyers(
         st.info("No sold leads found in the selected date range.")
         return
     
+    # === OVERVIEW SECTION ===
+    total_buyers = len(buyer_performances)
+    total_leads = sum(b.total_leads for b in buyer_performances)
+    total_sold = sum(b.sold_leads for b in buyer_performances)
+    total_revenue = sum(float(b.total_revenue) for b in buyer_performances)
+    avg_price = total_revenue / total_sold if total_sold > 0 else 0
+    top_buyer = max(buyer_performances, key=lambda b: float(b.total_revenue)) if buyer_performances else None
+    
+    st.markdown("#### 📊 Overview")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Total Buyers", f"{total_buyers:,}")
+    col2.metric("Total Leads Sold", f"{total_sold:,}")
+    col3.metric("Total Revenue", f"${total_revenue:,.2f}")
+    col4.metric("Avg Price/Lead", f"${avg_price:.2f}")
+    col5.metric("Top Buyer", top_buyer.buyer_name[:20] if top_buyer else "N/A")
+    
+    st.divider()
+    
     # Display buyer table
     buyer_df = buyer_performance_to_dataframe(buyer_performances)
     st.dataframe(buyer_df, use_container_width=True)
@@ -573,6 +591,31 @@ def _render_leadspedia_contracts(
     if not contracts:
         st.info("Click 'Refresh Contracts' to load contract data.")
         return
+    
+    # === OVERVIEW SECTION ===
+    total_contracts = len(contracts)
+    active_contracts = sum(1 for c in contracts if c.status.lower() == "active")
+    paused_contracts = sum(1 for c in contracts if c.status.lower() == "paused")
+    inactive_contracts = sum(1 for c in contracts if c.status.lower() == "inactive")
+    total_daily_cap = sum(c.daily_cap or 0 for c in contracts)
+    total_leads_today = sum(c.leads_today or 0 for c in contracts)
+    avg_price = sum(float(c.price) for c in contracts) / total_contracts if total_contracts > 0 else 0
+    unique_advertisers = len(set(c.advertiser_name for c in contracts if c.advertiser_name))
+    
+    st.markdown("#### 📊 Overview")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Contracts", f"{total_contracts:,}")
+    col2.metric("Active", f"{active_contracts:,}", delta=f"{active_contracts/total_contracts*100:.0f}%" if total_contracts else "0%")
+    col3.metric("Paused", f"{paused_contracts:,}")
+    col4.metric("Inactive", f"{inactive_contracts:,}")
+    
+    col5, col6, col7, col8 = st.columns(4)
+    col5.metric("Total Daily Cap", f"{total_daily_cap:,}")
+    col6.metric("Leads Today", f"{total_leads_today:,}")
+    col7.metric("Avg Price", f"${avg_price:.2f}")
+    col8.metric("Advertisers", f"{unique_advertisers:,}")
+    
+    st.divider()
     
     # Build contract table
     contract_data = []
@@ -621,6 +664,29 @@ def _render_leadspedia_advertisers(
     if not advertisers:
         st.info("Click 'Refresh Advertisers' to load advertiser data.")
         return
+    
+    # === OVERVIEW SECTION ===
+    total_advertisers = len(advertisers)
+    active_advertisers = sum(1 for a in advertisers if a.status.lower() == "active")
+    paused_advertisers = sum(1 for a in advertisers if a.status.lower() == "paused")
+    inactive_advertisers = sum(1 for a in advertisers if a.status.lower() == "inactive")
+    with_email = sum(1 for a in advertisers if a.email)
+    with_company = sum(1 for a in advertisers if a.company)
+    
+    st.markdown("#### 📊 Overview")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Advertisers", f"{total_advertisers:,}")
+    col2.metric("Active", f"{active_advertisers:,}", delta=f"{active_advertisers/total_advertisers*100:.0f}%" if total_advertisers else "0%")
+    col3.metric("Paused", f"{paused_advertisers:,}")
+    col4.metric("Inactive", f"{inactive_advertisers:,}")
+    
+    col5, col6, col7, col8 = st.columns(4)
+    col5.metric("With Email", f"{with_email:,}")
+    col6.metric("With Company", f"{with_company:,}")
+    col7.metric("Active %", f"{active_advertisers/total_advertisers*100:.1f}%" if total_advertisers else "0%")
+    col8.metric("Data Complete", f"{(with_email + with_company) / (total_advertisers * 2) * 100:.0f}%" if total_advertisers else "0%")
+    
+    st.divider()
     
     # Build advertiser table
     advertiser_data = []
@@ -751,9 +817,9 @@ def _render_combined_roi(
     # Detailed data table
     st.markdown("#### Detailed Performance Data")
     
-    # Column selection for display
+    # Column selection for display - includes LP Campaign
     display_cols = [
-        "campaign_name", "adset_name", "ad_name",
+        "campaign_name", "adset_name", "ad_name", "lp_campaign_name",
         "spend", "meta_leads", "revenue", "profit", "roi",
         "sell_through_rate", "avg_sale_price", "cpl", "break_even_cpl",
     ]
@@ -762,9 +828,38 @@ def _render_combined_roi(
     # Format numeric columns for display
     display_df = combined_df[available_cols].copy()
     
+    # Rename columns for clarity
+    column_rename = {
+        "campaign_name": "FB Campaign",
+        "adset_name": "Ad Set",
+        "ad_name": "Ad",
+        "lp_campaign_name": "LP Campaign",
+        "meta_leads": "Leads",
+        "spend": "Spend",
+        "revenue": "Revenue",
+        "profit": "Profit",
+        "roi": "ROI %",
+        "sell_through_rate": "Sell Rate %",
+        "avg_sale_price": "Avg Sale",
+        "cpl": "CPL",
+        "break_even_cpl": "Break-Even CPL",
+    }
+    display_df = display_df.rename(columns={k: v for k, v in column_rename.items() if k in display_df.columns})
+    
     st.dataframe(
-        display_df.sort_values(by=["profit"], ascending=False),
+        display_df.sort_values(by=["Profit"] if "Profit" in display_df.columns else ["profit"], ascending=False),
         use_container_width=True,
+        height=400,
+        column_config={
+            "Spend": st.column_config.NumberColumn("Spend", format="$%.2f"),
+            "Revenue": st.column_config.NumberColumn("Revenue", format="$%.2f"),
+            "Profit": st.column_config.NumberColumn("Profit", format="$%.2f"),
+            "ROI %": st.column_config.NumberColumn("ROI %", format="%.1f%%"),
+            "Sell Rate %": st.column_config.NumberColumn("Sell Rate %", format="%.1f%%"),
+            "Avg Sale": st.column_config.NumberColumn("Avg Sale", format="$%.2f"),
+            "CPL": st.column_config.NumberColumn("CPL", format="$%.2f"),
+            "Break-Even CPL": st.column_config.NumberColumn("Break-Even CPL", format="$%.2f"),
+        },
     )
     
     # Download button
